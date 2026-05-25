@@ -6,145 +6,102 @@ import shutil
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from torch import mode
 from ultralytics import YOLO
 import paho.mqtt.client as mqtt
 
 app = FastAPI()
 
-# ==========================================
-# TẠO THƯ MỤC
-# ==========================================
 if not os.path.exists("uploads"):
     os.makedirs("uploads")
 
-# ==========================================
+# =========================================================
 # MQTT CONFIG
-# ==========================================
+# =========================================================
 MQTT_CONF = {
-    "server": "0b9f6841ad1048afb1f4200aa7284c1e.s1.eu.hivemq.cloud",
-    "port": 8883,
-    "user": "trankhai112204",
-    "pass": "Loveghita89@"
+    # "server": "172.20.10.2",
+    "server": "192.168.100.162",
+    "port": 1883,
 }
 
 TOPIC_SPEED = "remote_car/speed"
 TOPIC_DIRECTION = "remote_car/direction"
 
-# ==========================================
-# GLOBAL STATE
-# ==========================================
+# =========================================================
+# TUNED SERVO REAL ANGLE (Đồng bộ với ESP32 đã tuning)
+# =========================================================
+SERVO_LEFT = 107
+SERVO_CENTER = 87
+SERVO_RIGHT = 67
+
+
 class GlobalState:
     mode = "reality"
-
-    video_source = "http://172.20.10.3:8080/video"
-
-    is_running = True
-
+    # video_source = "http://172.20.10.4:8080/video"
+    video_source = "http://192.168.100.166:8080/video"
+    is_running = True  # True: Chế độ tự hành (AI), False: Chế độ thủ công (Manual)
     logs = []
-
-    current_limit_speed = 140
-
+    current_limit_speed = 120
     last_sign_time = 0
-
     is_on_crosswalk = False
-
-    original_speed_before_cross = 140
-
-    last_move_cmd = ""
-
+    original_speed_before_cross = 120
+    base_motion_state = "F"
+    last_speed_cmd = 0
     last_log_content = ""
+    last_angle = 0.0
+    last_angle_sent = -1
+    last_turn_time = 0.0
+    last_valid_lane_width = 240.0
+    camera_offset = 0
 
-    # ===== FAILSAFE =====
-    prev_gray = None
-    freeze_start_time = None
-    emergency_stopped = False
 
 state = GlobalState()
 
-# ==========================================
-# MQTT
-# ==========================================
+# =========================================================
+# MQTT CONNECT
+# =========================================================
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
-mqtt_client.username_pw_set(
-    MQTT_CONF["user"],
-    MQTT_CONF["pass"]
-)
-
-mqtt_client.tls_set()
 
 def on_connect(client, userdata, flags, rc, properties=None):
-
     if rc == 0:
         print("✅ MQTT Connected!")
-
     else:
-        print(f"❌ MQTT Connection Failed. Code: {rc}")
+        print(f"❌ MQTT Failed: {rc}")
+
 
 mqtt_client.on_connect = on_connect
 
 try:
-
-    mqtt_client.connect(
-        MQTT_CONF["server"],
-        MQTT_CONF["port"]
-    )
-
+    mqtt_client.connect(MQTT_CONF["server"], MQTT_CONF["port"])
     mqtt_client.loop_start()
-
 except Exception as e:
-
     print(f"⚠️ MQTT ERROR: {e}")
 
-# ==========================================
-# LOG
-# ==========================================
+
+# =========================================================
+# LOGS & MQTT UTILS
+# =========================================================
 def add_log(msg):
-
     if msg != state.last_log_content:
-
         t = time.strftime("%H:%M:%S")
-
         state.logs.append(f"[{t}] {msg}")
-
         if len(state.logs) > 20:
             state.logs.pop(0)
-
         state.last_log_content = msg
 
-# ==========================================
-# MQTT SEND
-# ==========================================
+
 def send_mqtt(topic, msg):
-
     try:
-
-        mqtt_client.publish(topic, msg)
-
+        mqtt_client.publish(topic, msg, qos=0)
     except Exception as e:
+        add_log(f"MQTT Error: {e}")
 
-        add_log(f"Lỗi MQTT: {e}")
 
-# ==========================================
-# EMERGENCY STOP
-# ==========================================
-def emergency_stop(reason):
-
-    if not state.emergency_stopped:
-
-        send_mqtt(TOPIC_DIRECTION, "S")
-
-        state.is_running = False
-
-        state.emergency_stopped = True
-
-        add_log(f"🚨 EMERGENCY STOP: {reason}")
-
-# ==========================================
-# LOAD MODELS
-# ==========================================
+# =========================================================
+# LOAD MODEL & SPEED MAP
+# =========================================================
 model_sign = YOLO("models/WalkCross_Speed_Stop_Detec.pt")
-
 model_lane = YOLO("models/LaneSeg.pt")
 
 SPEED_MAP = {
@@ -157,458 +114,411 @@ SPEED_MAP = {
     "speed_limit_80": 180,
     "speed_limit_90": 200,
     "speed_limit_100": 220,
-    "stop": 0
+    # "stop": "S",
+    "stop": 0,
 }
 
-# ==========================================
-# AI PROCESSING
-# ==========================================
+
+# =========================================================
+# FRAME GENERATOR (XỬ LÝ CORE AI / STANLEY - ĐÃ FIX KẸT LUỒNG)
+# =========================================================
 def frame_generator():
+    last_active_source = None
+    cap = None
 
     while True:
+        # Kiểm tra xem nguồn dữ liệu hệ thống có bị thay đổi từ bên ngoài (API) hay không
+        if last_active_source != state.video_source:
+            if cap is not None:
+                cap.release()
+                add_log("🔄 Đang giải phóng luồng video cũ...")
 
-        cap = cv2.VideoCapture(state.video_source)
+            last_active_source = state.video_source
+            cap = cv2.VideoCapture(last_active_source)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            add_log(f"🎬 Khởi tạo thành công nguồn mới: {last_active_source}")
 
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Trường hợp thiết bị chưa sẵn sàng hoặc mất kết nối
+        if cap is None or not cap.isOpened():
+            add_log("❌ Không thể kết nối tới nguồn Video, thử lại sau 1 giây...")
+            time.sleep(1)
+            continue
 
-        while cap.isOpened():
+        # Đọc dữ liệu từ luồng hoạt động
+        success, frame = cap.read()
 
-            success, frame = cap.read()
-           
-            # ==========================================
-            # VIDEO STOP / CAMERA LOST
-            # ==========================================
-            if not success:
+        if not success:
+            # Nếu đang chạy giả lập video (Simulation) mà hết video -> Tự động tua lại đầu video để lặp vô hạn
+            if state.mode == "simulation":
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                time.sleep(0.05)
+                continue
+            else:
+                add_log("⚠️ Luồng Reality mất tín hiệu hoặc camera ngắt kết nối.")
+                if cap is not None:
+                    cap.release()
+                last_active_source = None  # Ép vòng lặp ngoài khởi tạo lại ở chu kỳ sau
+                time.sleep(1)
+                continue
 
-                emergency_stop("Mất video hoặc video đã kết thúc")
+        view_frame = frame.copy()
+        h, w, _ = frame.shape
+        mid_x = (w // 2) + state.camera_offset
 
-                break
+        # CHỈ XỬ LÝ ĐIỀU KHIỂN AI KHI "state.is_running == True"
+        if state.is_running:
+            res_sign = model_sign(frame, conf=0.45, imgsz=640, verbose=False)[0]
+            res_lane = model_lane(
+                frame, conf=0.4, imgsz=320, verbose=False, task="segment"
+            )[0]
 
-            view_frame = frame
+            # --- 1. TỰ ĐỘNG TÔ MÀU LANE THEO MÔ HÌNH SEGMENTATION ---
+            if res_lane.masks is not None:
+                view_frame = res_lane.plot(boxes=False)
 
-            h, w, _ = frame.shape
+            # --- 2. NHẬN DIỆN BIỂN BÁO CẢNH BÁO & VẼ KHUNG ĐÈ LÊN ---
+            found_walk_cross = False
+            if res_sign.boxes is not None:
+                if len(res_sign.boxes) > 0:
+                    view_frame = res_sign.plot(img=view_frame)
 
-            # ==========================================
-            # DETECT FRAME FREEZE
-            # ==========================================
-            small = cv2.resize(frame, (64, 64))
+                for box in res_sign.boxes:
+                    label = model_sign.names[int(box.cls[0])]
+                    x_c = float(box.xywh[0][0])
+                    conf = float(box.conf[0])
 
-            gray = cv2.cvtColor(
-                small,
-                cv2.COLOR_BGR2GRAY
-            )
+                    if label == "walk_cross":
+                        found_walk_cross = True
+                        if not state.is_on_crosswalk:
+                            state.is_on_crosswalk = True
+                            state.original_speed_before_cross = (
+                                state.current_limit_speed
+                            )
+                            target = max(
+                                90, int(state.original_speed_before_cross * 0.7)
+                            )
+                            send_mqtt(TOPIC_SPEED, f"s{target}")
+                            add_log(f"🚶 WalkCross -> Giảm tốc: {target}")
 
-            if state.prev_gray is not None:
+                    elif label in SPEED_MAP:
+                        now = time.time()
+                        if x_c > (w * 0.4) and (now - state.last_sign_time > 4):
+                            limit = SPEED_MAP[label]
+                            if label == "stop" and conf > 0.8:
+                                # send_mqtt(TOPIC_DIRECTION, "S")
+                                # state.base_motion_state = "S"
+                                # state.is_running = False
+                                add_log("🛑 BIỂN BÁO STOP -> DỪNG XE & TẮT AI")
+                            else:
+                                state.current_limit_speed = limit
+                                send_mqtt(TOPIC_SPEED, f"s{limit}")
+                                add_log(f"📉 Biển báo {label} -> Tốc độ: {limit}")
+                            state.last_sign_time = now
 
-                diff = cv2.absdiff(
-                    state.prev_gray,
-                    gray
+            if state.is_on_crosswalk and not found_walk_cross:
+                state.is_on_crosswalk = False
+                send_mqtt(TOPIC_SPEED, f"s{state.original_speed_before_cross}")
+                add_log(
+                    f"✅ Hết vạch qua đường -> Khôi phục: {state.original_speed_before_cross}"
                 )
 
-                motion_score = np.mean(diff)
+            # --- 3. THUẬT TOÁN ĐIỀU HƯỚNG STANLEY (ĐÃ SỬA LỖI MƯỢT MÀ) ---
+            if res_lane.masks is not None:
+                try:
+                    lane_mask = res_lane.masks.data[0].cpu().numpy()
+                    lane_mask = cv2.resize(lane_mask, (w, h))
 
-                # Nếu frame gần như đứng yên
-                if motion_score < 1.5:
+                    roi_y_start, roi_y_end = int(h * 0.65), int(h * 0.95)
+                    roi = lane_mask[roi_y_start:roi_y_end, :]
+                    y_indices, x_indices = np.where(roi > 0.5)
+                    y_indices += roi_y_start
 
-                    if state.freeze_start_time is None:
-
-                        state.freeze_start_time = time.time()
-
-                    freeze_duration = (
-                        time.time() -
-                        state.freeze_start_time
-                    )
-
-                    # Đứng quá 2 giây
-                    if freeze_duration > 2:
-
-                        emergency_stop(
-                            "Camera bị đứng hình"
+                    if len(x_indices) > 50:
+                        left_lane_mask, right_lane_mask = (
+                            x_indices < mid_x,
+                            x_indices >= mid_x,
+                        )
+                        left_x, left_y = (
+                            x_indices[left_lane_mask],
+                            y_indices[left_lane_mask],
+                        )
+                        right_x, right_y = (
+                            x_indices[right_lane_mask],
+                            y_indices[right_lane_mask],
                         )
 
-                else:
+                        sample_y = np.linspace(roi_y_start, roi_y_end, 6)
+                        center_line_x = []
 
-                    # Frame chuyển động lại bình thường
-                    state.freeze_start_time = None
+                        for y in sample_y:
+                            left_points = left_x[np.abs(left_y - y) < 15]
+                            right_points = right_x[np.abs(right_y - y) < 15]
+                            has_left, has_right = (
+                                len(left_points) > 3,
+                                len(right_points) > 3,
+                            )
 
-                    state.emergency_stopped = False
-
-            state.prev_gray = gray
-
-            # ==========================================
-            # CHẠY AI
-            # ==========================================
-            if state.is_running:
-
-                res_sign = model_sign(
-                    frame,
-                    conf=0.45,
-                    imgsz=640,
-                    verbose=False
-                )[0]
-
-                res_lane = model_lane(
-                    frame,
-                    conf=0.45,
-                    imgsz=640,
-                    verbose=False,
-                    task='segment'
-                )[0]
-
-                found_walk_cross = False
-
-                # ======================================
-                # SIGN DETECTION
-                # ======================================
-                if res_sign.boxes is not None:
-
-                    for box in res_sign.boxes:
-
-                        label = model_sign.names[
-                            int(box.cls[0])
-                        ]
-
-                        x_c = float(box.xywh[0][0])
-
-                        # ==============================
-                        # WALK CROSS
-                        # ==============================
-                        if label == "walk_cross":
-
-                            found_walk_cross = True
-
-                            if not state.is_on_crosswalk:
-
-                                state.is_on_crosswalk = True
-
-                                state.original_speed_before_cross = (
-                                    state.current_limit_speed
+                            if has_left and has_right:
+                                measured_width = np.mean(right_points) - np.mean(
+                                    left_points
                                 )
-
-                                target = max(
-                                    130,
-                                    int(
-                                        state.original_speed_before_cross * 0.7
-                                    )
+                                if 140 < measured_width < 380:
+                                    state.last_valid_lane_width = measured_width
+                                cx = (np.mean(left_points) + np.mean(right_points)) / 2
+                                center_line_x.append(cx)
+                            elif has_left:
+                                cx = np.mean(left_points) + (
+                                    state.last_valid_lane_width / 2
                                 )
-
-                                send_mqtt(
-                                    TOPIC_SPEED,
-                                    f"s{target}"
+                                center_line_x.append(cx)
+                            elif has_right:
+                                cx = np.mean(right_points) - (
+                                    state.last_valid_lane_width / 2
                                 )
+                                center_line_x.append(cx)
 
-                                add_log(
-                                    f"🚶 Vạch đi bộ -> Giảm tốc {target}"
-                                )
+                        center_line_x = np.array(center_line_x)
 
-                        # ==============================
-                        # SPEED / STOP
-                        # ==============================
-                        elif label in SPEED_MAP:
+                        if len(center_line_x) >= 4 and state.base_motion_state != "S":
 
+                            # =========================================================
+                            # 1. TÍNH TOÁN CROSS-TRACK & HEADING
+                            # =========================================================
+                            target_near_x = center_line_x[-1]
+
+                            # Sai số lệch tâm lane
+                            error_e = (target_near_x - mid_x) / (w / 2.0)
+
+                            # Góc hướng lane
+                            dx = center_line_x[0] - center_line_x[-1]
+                            dy = sample_y[0] - sample_y[-1]
+
+                            heading_theta = np.arctan2(dx, -dy)
+                            heading_deg = np.degrees(heading_theta)
+
+                            # =========================================================
+                            # 2. HUMAN-LIKE STABILIZER
+                            # =========================================================
+                            # Nếu xe đã gần song song lane
+                            # và lệch không đáng kể
+                            # => ưu tiên đi thẳng thay vì kéo liên tục về tâm
+
+                            if abs(heading_deg) < 4 and abs(error_e) < 0.12:
+                                error_e = 0
+
+                            # =========================================================
+                            # 3. DEAD-BAND ANTI OSCILLATION
+                            # =========================================================
+                            # Vùng chết chống rung lắc quanh tâm
+
+                            if abs(error_e) < 0.05:
+                                error_e = 0
+
+                            # =========================================================
+                            # 4. STANLEY CONTROL
+                            # =========================================================
+                            calc_v = max(100, state.current_limit_speed)
+
+                            # Gain mềm hơn
+                            k_gain = 2.2
+
+                            steering_angle_rad = -heading_theta + np.arctan2(
+                                k_gain * error_e, calc_v
+                            )
+
+                            steering_angle_deg = np.clip(
+                                np.degrees(steering_angle_rad), -30, 30
+                            )
+
+                            # =========================================================
+                            # 5. STRAIGHT PRIORITY MODE
+                            # =========================================================
+                            # Nếu xe đã align lane khá tốt
+                            # => ép servo đi thẳng để tránh hunting
+
+                            if abs(heading_deg) < 2.5 and abs(error_e) < 0.08:
+                                steering_angle_deg = 0
+
+                            # =========================================================
+                            # 6. EMA FILTER
+                            # =========================================================
+                            alpha = 0.88
+
+                            steering_angle_deg = (
+                                alpha * state.last_angle
+                                + (1 - alpha) * steering_angle_deg
+                            )
+
+                            state.last_angle = steering_angle_deg
+
+                            # 4. Tính toán Tốc độ tối ưu theo góc rẽ
+                            abs_angle = abs(steering_angle_deg)
+                            base_speed = state.current_limit_speed
+                            if abs_angle > 10:  # Vào cua gắt
+                                target_speed = max(100, int(base_speed * 0.65))
+                            else:
+                                target_speed = base_speed
+
+                            if target_speed != state.last_speed_cmd:
+                                send_mqtt(TOPIC_SPEED, f"s{target_speed}")
+                                state.last_speed_cmd = target_speed
+
+                            # 5. ÁNH XẠ GÓC SERVO CHUẨN XÁC (Sửa lỗi lệch tâm hình học)
                             now = time.time()
-
                             if (
-                                x_c > (w * 0.5)
-                                and
-                                (now - state.last_sign_time > 3)
-                            ):
-
-                                limit = SPEED_MAP[label]
-
-                                # STOP SIGN
-                                if label == "stop":
-
-                                    send_mqtt(
-                                        TOPIC_DIRECTION,
-                                        "S"
+                                now - state.last_turn_time > 0.03
+                            ):  # Tăng tần suất gửi lái lên ~33Hz (0.03s)
+                                if steering_angle_deg >= 0:
+                                    # Cua Trái: từ CENTER (87) tiến dần lên LEFT (115)
+                                    servo_angle = int(
+                                        SERVO_CENTER
+                                        + (steering_angle_deg / 30.0)
+                                        * (SERVO_LEFT - SERVO_CENTER)
                                     )
-
-                                    state.is_running = False
-
-                                    add_log(
-                                        "🛑 STOP SIGN -> Dừng xe"
-                                    )
-
                                 else:
-
-                                    state.current_limit_speed = limit
-
-                                    send_mqtt(
-                                        TOPIC_SPEED,
-                                        f"s{limit}"
+                                    # Cua Phải: từ CENTER (87) lùi dần về RIGHT (65)
+                                    servo_angle = int(
+                                        SERVO_CENTER
+                                        + (steering_angle_deg / 30.0)
+                                        * (SERVO_CENTER - SERVO_RIGHT)
                                     )
 
+                                    servo_angle = np.clip(
+                                        servo_angle, SERVO_RIGHT, SERVO_LEFT
+                                    )
+
+                                # Chỉ gửi khi góc thực sự thay đổi để tránh tràn băng thông MQTT
+                                if abs(servo_angle - state.last_angle_sent) >= 1:
+                                    send_mqtt(TOPIC_DIRECTION, str(servo_angle))
+                                    state.last_angle_sent = servo_angle
                                     add_log(
-                                        f"📉 {label} -> {limit}"
+                                        f"🎯 Stanley -> Servo: {servo_angle}° | Err: {error_e:.2f}"
                                     )
+                                state.last_turn_time = now
 
-                                state.last_sign_time = now
+                            for i in range(len(center_line_x)):
+                                cv2.circle(
+                                    view_frame,
+                                    (int(center_line_x[i]), int(sample_y[i])),
+                                    5,
+                                    (0, 0, 255),
+                                    -1,
+                                )
 
-                # ======================================
-                # CROSS WALK END
-                # ======================================
-                if (
-                    state.is_on_crosswalk
-                    and
-                    not found_walk_cross
-                ):
+                except Exception as e:
+                    print(f"⚠️ Stanley Error: {e}")
+        # Hãm nhẹ tốc độ xử lý khi chạy Simulation để tránh ngốn 100% tài nguyên CPU không cần thiết
+        if state.mode == "simulation":
+            time.sleep(0.02)  # Khống chế ở mức ~40-50fps mượt mà
+        # 1. Vẽ tâm ảnh bằng màu xanh lá (Green)
+        cv2.line(view_frame, (w // 2, 0), (w // 2, h), (0, 255, 0), 1)
 
-                    state.is_on_crosswalk = False
-
-                    send_mqtt(
-                        TOPIC_SPEED,
-                        f"s{state.original_speed_before_cross}"
-                    )
-
-                    add_log(
-                        f"✅ Hết vạch -> Hồi tốc "
-                        f"{state.original_speed_before_cross}"
-                    )
-
-                # ======================================
-                # LANE FOLLOWING
-                # ======================================
-                if res_lane.masks is not None:
-
-                    center_x = np.mean(
-                        res_lane.masks.xyn[0][:, 0]
-                    )
-
-                    active_cmd = "F"
-
-                    if center_x < 0.38:
-
-                        active_cmd = "R"
-
-                    elif center_x > 0.62:
-
-                        active_cmd = "L"
-
-                    if active_cmd != state.last_move_cmd:
-
-                        send_mqtt(
-                            TOPIC_DIRECTION,
-                            active_cmd
-                        )
-
-                        state.last_move_cmd = active_cmd
-
-                        dir_msg = {
-                            "F": "Đi thẳng",
-                            "L": "Rẽ trái",
-                            "R": "Rẽ phải"
-                        }
-
-                        add_log(
-                            f"Lái xe: {dir_msg[active_cmd]}"
-                        )
-
-                # ======================================
-                # DRAW RESULT
-                # ======================================
-                view_frame = res_lane.plot(
-                    boxes=False
-                )
-
-                view_frame = res_sign.plot(
-                    img=view_frame
-                )
-
-            # ==========================================
-            # STREAM FRAME
-            # ==========================================
-            _, buffer = cv2.imencode(
-                '.jpg',
-                view_frame
-            )
-
-            yield (
-                b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n\r\n'
-                +
-                buffer.tobytes()
-                +
-                b'\r\n'
-            )
-
-        cap.release()
-
-        time.sleep(0.5)
-
-# ==========================================
-# API
-# ==========================================
-@app.post("/upload_video")
-async def upload_video(
-    file: UploadFile = File(...)
-):
-
-    file_path = os.path.join(
-        "uploads",
-        file.filename
-    )
-
-    with open(file_path, "wb") as buffer:
-
-        shutil.copyfileobj(
-            file.file,
-            buffer
+        # 2. Vẽ tâm thực tế của xe bằng màu xanh dương (Blue)
+        cv2.line(view_frame, (int(mid_x), 0), (int(mid_x), h), (255, 0, 0), 2)
+        # Gửi hình ảnh luồng video về giao diện Web HTML
+        _, buffer = cv2.imencode(".jpg", view_frame)
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
         )
 
-    return {
-        "filename": file.filename
-    }
 
-# ==========================================
-# SET MODE
-# ==========================================
+# =========================================================
+# CONTROLLER ENDPOINTS
+# =========================================================
+@app.post("/upload_video")
+async def upload_video(file: UploadFile = File(...)):
+    file_path = os.path.join("uploads", file.filename)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return {"filename": file.filename}
+
+
 @app.get("/set_mode")
-def set_mode(
-    mode: str,
-    file: str = ""
-):
-
+def set_mode(mode: str, file: str = ""):
     state.mode = mode
-
+    # state.video_source = (
+    #     "http://172.20.10.4:8080/video" if mode == "reality" else f"uploads/{file}"
+    # )
     state.video_source = (
-        "http://172.20.10.3:8080/video"
-        if mode == "reality"
-        else f"uploads/{file}"
+        "http://192.168.100.166:8080/video" if mode == "reality" else f"uploads/{file}"
     )
 
-    # reset failsafe
-    state.prev_gray = None
-    state.freeze_start_time = None
-    state.emergency_stopped = False
+    add_log(f"Chế độ -> {mode}")
+    return {"status": "ok"}
 
-    add_log(f"Chế độ: {mode.upper()}")
 
-    return {
-        "status": "ok"
-    }
-
-# ==========================================
-# SET SPEED
-# ==========================================
 @app.get("/set_speed")
 def set_speed(val: int):
-
     state.current_limit_speed = val
+    send_mqtt(TOPIC_SPEED, f"s{val}")
+    add_log(f"Cài đặt tốc độ trần -> {val}")
+    return {"status": "ok"}
 
-    send_mqtt(
-        TOPIC_SPEED,
-        f"s{val}"
-    )
 
-    add_log(f"Cài tốc độ: {val}")
-
-    return {
-        "status": "ok"
-    }
-
-# ==========================================
-# CONTROL
-# ==========================================
 @app.get("/control")
 def control(cmd: str):
-
-    # START AI
     if cmd == "START":
-
         state.is_running = True
+        state.base_motion_state = "F"
 
-        state.emergency_stopped = False
+        send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
+        add_log("▶️ KÍCH HOẠT HỆ THỐNG TỰ HÀNH AI")
 
-        state.freeze_start_time = None
-
-        add_log("▶ BẬT AI")
-
-    # STOP AI
     elif cmd == "STOP_AI":
-
         state.is_running = False
+        state.base_motion_state = "S"
+        send_mqtt(TOPIC_SPEED, "S")
+        send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
+        add_log("⏸ KHÓA AI -> CHUYỂN SANG ĐIỀU KHIỂN THỦ CÔNG")
 
-        send_mqtt(
-            TOPIC_DIRECTION,
-            "S"
-        )
-
-        add_log("⏸ TẮT AI - DỪNG XE")
-
-    # MANUAL CONTROL
     else:
+        if not state.is_running:
+            if cmd in ["F", "B", "S"]:
+                state.base_motion_state = cmd
+                send_mqtt(TOPIC_DIRECTION, cmd)
+                add_log(f"Thủ công -> Di chuyển: {cmd}")
+            elif cmd == "L":
+                send_mqtt(TOPIC_DIRECTION, str(SERVO_LEFT))
+                add_log(f"Thủ công -> Bẻ lái Trái: {SERVO_LEFT}°")
+            elif cmd == "R":
+                send_mqtt(TOPIC_DIRECTION, str(SERVO_RIGHT))
+                add_log(f"Thủ công -> Bẻ lái Phải: {SERVO_RIGHT}°")
+            elif cmd == "G":
+                send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
+                add_log(f"Thủ công -> Thẳng lái: {SERVO_CENTER}°")
+        else:
+            add_log("⚠️ Vui lòng bấm 'STOP AI' trước khi muốn lái thủ công!")
 
-        send_mqtt(
-            TOPIC_DIRECTION,
-            cmd
-        )
+    return {"status": "ok"}
 
-    return {
-        "status": "ok"
-    }
 
-# ==========================================
-# STATUS
-# ==========================================
 @app.get("/get_status")
 def get_status():
-
     return {
         "logs": state.logs,
         "speed": state.current_limit_speed,
-        "is_running": state.is_running
+        "is_running": state.is_running,
     }
 
-# ==========================================
-# VIDEO FEED
-# ==========================================
+
 @app.get("/video_feed")
 def video_feed():
-
     return StreamingResponse(
-        frame_generator(),
-        media_type=(
-            "multipart/x-mixed-replace;"
-            " boundary=frame"
-        )
+        frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
-# ==========================================
-# STATIC
-# ==========================================
-app.mount(
-    "/",
-    StaticFiles(
-        directory="static",
-        html=True
-    ),
-    name="static"
-)
 
-# ==========================================
-# MAIN
-# ==========================================
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
 if __name__ == "__main__":
-
     import uvicorn
 
     try:
-
         uvicorn.run(
-            app,
-            host="127.0.0.1",
-            port=8000,
-            log_level="error",
-            timeout_keep_alive=0
+            app, host="127.0.0.1", port=8000, log_level="error", timeout_keep_alive=0
         )
-
     except KeyboardInterrupt:
-
-        print("\n🛑 Đang dừng...")
-
         state.is_running = False
-
         mqtt_client.loop_stop()
-
         mqtt_client.disconnect()

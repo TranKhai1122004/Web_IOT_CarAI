@@ -4,11 +4,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-    <title>AI Autonomous Car</title>
-
+    <title>AI Autonomous Car Control Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
-
     <style>
         * {
             scrollbar-width: thin;
@@ -17,13 +14,9 @@
 
         body {
             overflow-x: hidden;
-
-            background:
-                radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.18), transparent 22%),
+            background: radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.18), transparent 22%),
                 radial-gradient(circle at 90% 20%, rgba(168, 85, 247, 0.18), transparent 22%),
-                radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.12), transparent 30%),
-                #030712;
-
+                radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.12), transparent 30%), #030712;
             min-height: 100vh;
         }
 
@@ -31,781 +24,244 @@
             background: rgba(15, 23, 42, 0.65);
             backdrop-filter: blur(24px);
             border: 1px solid rgba(255, 255, 255, 0.06);
-
-            box-shadow:
-                0 20px 60px rgba(0, 0, 0, 0.45),
-                inset 0 1px 0 rgba(255, 255, 255, 0.03);
-        }
-
-        .glass-dark {
-            background: rgba(3, 7, 18, 0.72);
-            backdrop-filter: blur(18px);
-        }
-
-        .neon-border {
-            position: relative;
-            overflow: hidden;
-        }
-
-        .neon-border::before {
-            content: '';
-            position: absolute;
-            inset: -1px;
-
-            background:
-                linear-gradient(135deg,
-                    rgba(59, 130, 246, 0.8),
-                    rgba(168, 85, 247, 0.7),
-                    rgba(16, 185, 129, 0.7));
-
-            z-index: -1;
-            filter: blur(18px);
-            opacity: 0.45;
-        }
-
-        .video-frame {
-            position: relative;
-        }
-
-        .video-frame::after {
-            content: '';
-            position: absolute;
-            inset: 0;
-
-            background:
-                linear-gradient(180deg,
-                    rgba(255, 255, 255, 0.03),
-                    transparent 15%,
-                    transparent 85%,
-                    rgba(255, 255, 255, 0.02));
-
-            pointer-events: none;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
         }
 
         .control-btn {
-            position: relative;
-
-            background:
-                linear-gradient(180deg,
-                    rgba(30, 41, 59, 0.95),
-                    rgba(15, 23, 42, 1));
-
-            border: 1px solid rgba(255, 255, 255, 0.05);
-
-            transition: 0.15s ease;
-
-            box-shadow:
-                inset 0 1px 0 rgba(255, 255, 255, 0.05),
-                0 10px 25px rgba(0, 0, 0, 0.35);
+            transition: all 0.1s ease;
+            background: linear-gradient(180deg, #1e293b, #0f172a);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         .control-btn:hover {
             transform: translateY(-2px);
-            border-color: rgba(59, 130, 246, 0.35);
-
-            box-shadow:
-                0 0 25px rgba(59, 130, 246, 0.18),
-                0 10px 25px rgba(0, 0, 0, 0.35);
+            border-color: #3b82f6;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
         }
 
         .control-btn:active {
-            transform: scale(0.94);
-        }
-
-        .btn-primary {
-            background:
-                linear-gradient(135deg,
-                    #2563eb,
-                    #7c3aed);
-
-            box-shadow:
-                0 0 30px rgba(99, 102, 241, 0.35);
-        }
-
-        .btn-success {
-            background:
-                linear-gradient(135deg,
-                    #10b981,
-                    #059669);
-
-            box-shadow:
-                0 0 30px rgba(16, 185, 129, 0.4);
-        }
-
-        .btn-danger {
-            background:
-                linear-gradient(135deg,
-                    #ef4444,
-                    #dc2626);
-
-            box-shadow:
-                0 0 30px rgba(239, 68, 68, 0.35);
-        }
-
-        .mode-card {
-            transition: 0.25s ease;
-            border: 1px solid rgba(255, 255, 255, 0.04);
-        }
-
-        .mode-card:hover {
-            transform: translateY(-2px);
-        }
-
-        /* ========= ACTIVE MODE ========= */
-        .mode-active {
-            background:
-                linear-gradient(135deg,
-                    #10b981,
-                    #059669) !important;
-
-            border: 1px solid rgba(16, 185, 129, 0.6) !important;
-
-            box-shadow:
-                0 0 35px rgba(16, 185, 129, 0.45),
-                inset 0 1px 0 rgba(255, 255, 255, 0.08);
-        }
-
-        .mode-active p {
-            color: white !important;
-        }
-
-        /* ========= INACTIVE MODE ========= */
-        .mode-inactive {
-            background: rgba(15, 23, 42, 0.45);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            box-shadow: none;
-        }
-
-        .speed-ring {
-            width: 140px;
-            height: 140px;
-            border-radius: 999px;
-
-            background:
-                conic-gradient(#3b82f6 0deg,
-                    #8b5cf6 120deg,
-                    #10b981 220deg,
-                    rgba(255, 255, 255, 0.08) 360deg);
-
-            padding: 6px;
-
-            box-shadow:
-                0 0 35px rgba(59, 130, 246, 0.25);
-        }
-
-        .speed-inner {
-            width: 100%;
-            height: 100%;
-            border-radius: 999px;
-
-            background: #020617;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-        }
-
-        .log-container {
-            background: #010409;
-
-            font-family: Consolas, monospace;
-            color: #00ff88;
-
-            height: 260px;
-
-            overflow-y: auto;
-
-            padding: 18px;
-
-            border-radius: 24px;
-
-            border: 1px solid rgba(16, 185, 129, 0.12);
-        }
-
-        .range-modern::-webkit-slider-thumb {
-            appearance: none;
-
-            width: 20px;
-            height: 20px;
-
-            border-radius: 999px;
-
-            background: white;
-
-            border: 4px solid #3b82f6;
-
-            cursor: pointer;
-
-            box-shadow:
-                0 0 20px rgba(59, 130, 246, 0.7);
-        }
-
-        .hud-line {
-            position: absolute;
-            background: rgba(59, 130, 246, 0.45);
-        }
-
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% {
-                opacity: 0.5;
-                transform: scale(1);
-            }
-
-            50% {
-                opacity: 1;
-                transform: scale(1.06);
-            }
-
-            100% {
-                opacity: 0.5;
-                transform: scale(1);
-            }
+            transform: scale(0.95);
+            background: linear-gradient(180deg, #2563eb, #1d4ed8);
+            border-color: #60a5fa;
         }
     </style>
 </head>
 
-<body class="text-white p-4 lg:p-6">
+<body class="text-gray-100 font-sans p-4 md:p-8">
 
-    <div class="max-w-[1800px] mx-auto grid grid-cols-1 2xl:grid-cols-[1.5fr_430px] gap-6">
-
-        <!-- LEFT -->
-        <div class="space-y-6">
-
-            <!-- VIDEO -->
-            <div class="glass neon-border rounded-[32px] overflow-hidden">
-
-                <!-- TOPBAR -->
-                <div class="flex items-center justify-between px-6 py-5 border-b border-white/5">
-
-                    <div class="flex items-center gap-4">
-
-                        <div
-                            class="w-14 h-14 rounded-2xl btn-primary flex items-center justify-center text-2xl font-black">
-                            AI
-                        </div>
-
-                        <div>
-                            <h1 class="text-3xl font-black tracking-tight">
-                                AUTONOMOUS CAR SYSTEM
-                            </h1>
-
-                            <p class="text-sm text-gray-400">
-                                Neural Driving Interface • Real-time Monitoring
-                            </p>
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-
-                        <div class="glass-dark px-4 py-2 rounded-2xl border border-white/5">
-                            <div class="flex items-center gap-2">
-
-                                <div class="w-2.5 h-2.5 rounded-full bg-green-400 pulse"></div>
-
-                                <span class="text-sm font-bold text-green-400">
-                                    ONLINE
-                                </span>
-
-                            </div>
-                        </div>
-
-                        <div id="statusBadge"
-                            class="glass-dark px-5 py-2 rounded-2xl border border-white/5 text-sm font-bold">
-                            CONNECTING...
-                        </div>
-
-                    </div>
-                </div>
-
-                <!-- VIDEO -->
-                <div class="video-frame relative bg-black">
-
-                    <img id="mainFeed" src="/video_feed" class="w-full object-contain bg-black"
-                        style="min-height:700px;">
-
-                    <!-- OVERLAY -->
-                    <div class="absolute bottom-6 left-6 flex flex-wrap gap-4">
-
-                        <div class="glass-dark px-5 py-3 rounded-2xl border border-white/5">
-                            <p class="text-xs text-gray-500 uppercase">
-                                Driving Mode
-                            </p>
-
-                            <p id="modeText" class="text-lg font-black text-blue-400">
-                                REALITY
-                            </p>
-                        </div>
-
-                    </div>
-
-                </div>
-
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- HEADER -->
+        <header class="glass rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1
+                    class="text-2xl font-black tracking-wider bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">
+                    AI AUTONOMOUS VEHICLE</h1>
+                <p class="text-sm text-gray-400 mt-1">Hệ thống giám sát vạch kẻ đường Stanley & Nhận diện biển báo</p>
             </div>
+            <div class="flex gap-3">
+                <button onclick="sendCmd('START')"
+                    class="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-emerald-500 to-teal-600 shadow-lg shadow-emerald-900/30 hover:brightness-110 active:scale-95 transition">START
+                    AI RUN</button>
+                <button onclick="sendCmd('STOP_AI')"
+                    class="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-red-500 to-pink-600 shadow-lg shadow-red-900/30 hover:brightness-110 active:scale-95 transition">STOP
+                    AI (MANUAL)</button>
+            </div>
+        </header>
 
-            <!-- LOG -->
-            <div class="glass rounded-[32px] p-5">
+        <!-- MAIN LAYOUT -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- LEFT & CENTER: VIDEO MANAGEMENT & CAMERA STREAM -->
+            <div class="lg:col-span-2 space-y-6">
 
-                <div class="flex items-center justify-between mb-4">
-
+                <!-- KHU VỰC UPLOAD FILE & CHỌN NGUỒN PHÁT (ĐÃ THÊM LẠI) -->
+                <div class="glass rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
                     <div>
-                        <h2 class="text-xl font-black tracking-wide">
-                            SYSTEM CONSOLE
-                        </h2>
-
-                        <p class="text-sm text-gray-500">
-                            Real-time AI diagnostics
-                        </p>
+                        <h3 class="text-sm font-bold uppercase tracking-wider text-blue-400 mb-2">📁 Tải Lên Video Giả
+                            Lập</h3>
+                        <div class="flex gap-2">
+                            <input type="file" id="videoFile" accept="video/*"
+                                class="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 bg-gray-900/50 rounded-lg border border-gray-800 p-1 cursor-pointer" />
+                            <button onclick="uploadVideo()"
+                                class="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg text-xs font-bold hover:brightness-110 active:scale-95 transition">UPLOAD</button>
+                        </div>
                     </div>
-
+                    <div>
+                        <h3 class="text-sm font-bold uppercase tracking-wider text-purple-400 mb-2">🌐 Cấu Hình Nguồn
+                            Video</h3>
+                        <div class="flex gap-2">
+                            <select id="modeSelect" onchange="switchMode()"
+                                class="bg-gray-900/80 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-purple-500 w-full">
+                                <option value="reality">Live Camera (IP Cam từ xe)</option>
+                                <option value="simulation">Simulation (Chạy Video Giả Lập)</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
-                <div id="logs" class="log-container"></div>
-
+                <!-- LIVE VIDEO STREAM -->
+                <div class="glass rounded-2xl p-4 overflow-hidden flex items-center justify-center">
+                    <img id="liveStream" src="/video_feed"
+                        class="w-full h-auto rounded-xl object-cover border border-gray-800" alt="Live Camera" />
+                </div>
             </div>
 
-        </div>
+            <!-- RIGHT: CONTROL CONSOLE -->
+            <div class="space-y-6">
+                <!-- MANUAL REMOTE PAD -->
+                <div class="glass rounded-2xl p-6">
+                    <h3 class="text-md font-bold uppercase tracking-wider text-blue-400 mb-6 flex items-center gap-2">
+                        🕹️ BÀN ĐIỀU KHIỂN THỦ CÔNG (NHẤP NHẢ)</h3>
 
-        <!-- RIGHT -->
-        <div class="space-y-6">
+                    <!-- D-PAD INTERFACE -->
+                    <div class="flex flex-col items-center gap-3 my-4">
+                        <!-- NÚT TIẾN (F) -> NHẢ RA DỪNG (S) -->
+                        <button onmousedown="sendCmd('F')" onmouseup="sendCmd('S')" onmouseleave="sendCmd('S')"
+                            ontouchstart="sendCmd('F')" ontouchend="sendCmd('S')"
+                            class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-emerald-400">▲</button>
 
-            <!-- AI CONTROL -->
-            <div class="glass rounded-[32px] p-5">
+                        <div class="flex gap-3">
+                            <!-- NÚT TRÁI (L) -> NHẢ RA THẲNG LÁI (G) -->
+                            <button onmousedown="sendCmd('L')" onmouseup="sendCmd('G')" onmouseleave="sendCmd('G')"
+                                ontouchstart="sendCmd('L')" ontouchend="sendCmd('G')"
+                                class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-yellow-400">◀</button>
 
-                <div class="grid grid-cols-2 gap-4">
+                            <!-- NÚT TÂM (G) -->
+                            <button onclick="sendCmd('G')"
+                                class="control-btn w-16 h-16 rounded-xl font-bold text-sm text-gray-300">TÂM</button>
 
-                    <button id="btnRunAI" onclick="toggleAI('START')"
-                        class="btn-success py-5 rounded-3xl font-black tracking-wide text-lg transition">
-                        ▶ RUN AI
-                    </button>
-
-                    <button id="btnStopAI" onclick="toggleAI('STOP_AI')"
-                        class="bg-gray-800 py-5 rounded-3xl font-black tracking-wide text-lg transition">
-                        ⏸ STOP
-                    </button>
-
-                </div>
-
-            </div>
-
-            <!-- VIDEO SOURCE -->
-            <div class="glass rounded-[32px] p-5 space-y-4">
-
-                <button id="btnReality" onclick="switchMode('reality')"
-                    class="mode-card mode-active w-full p-5 rounded-3xl text-left">
-
-                    <div class="flex items-center justify-between">
-
-                        <div>
-                            <p class="font-black text-lg">
-                                📡 REAL CAMERA
-                            </p>
-
-                            <p class="text-sm text-gray-300">
-                                Live physical camera stream
-                            </p>
+                            <!-- NÚT PHẢI (R) -> NHẢ RA THẲNG LÁI (G) -->
+                            <button onmousedown="sendCmd('R')" onmouseup="sendCmd('G')" onmouseleave="sendCmd('G')"
+                                ontouchstart="sendCmd('R')" ontouchend="sendCmd('G')"
+                                class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-yellow-400">▶</button>
                         </div>
 
+                        <!-- NÚT LÙI (B) -> NHẢ RA DỪNG (S) -->
+                        <button onmousedown="sendCmd('B')" onmouseup="sendCmd('S')" onmouseleave="sendCmd('S')"
+                            ontouchstart="sendCmd('B')" ontouchend="sendCmd('S')"
+                            class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-red-400">▼</button>
                     </div>
 
-                </button>
-
-                <div id="containerTest" class="mode-card mode-inactive p-5 rounded-3xl space-y-4 cursor-pointer">
-
-                    <div class="flex items-center justify-between">
-
-                        <div>
-                            <p class="font-black text-lg">
-                                🎬 SIMULATION
-                            </p>
-
-                            <p class="text-sm text-gray-400">
-                                Upload MP4 testing environment
-                            </p>
-                        </div>
-
+                    <div class="w-full mt-6">
+                        <!-- PHANH KHẨN CẤP -->
+                        <button onclick="sendCmd('S')"
+                            class="w-full py-4 rounded-xl font-black bg-gradient-to-r from-amber-500 to-orange-600 shadow-md hover:brightness-110 text-white">PHANH
+                            KHẨN CẤP (STOP)</button>
                     </div>
-
-                    <input type="file" id="videoFile" accept="video/mp4" hidden onchange="handleVideoSelect(event)">
-
-                    <!-- EMPTY STATE -->
-                    <div id="uploadPlaceholder" onclick="document.getElementById('videoFile').click()" class="glass-dark rounded-2xl border border-dashed border-blue-500/30
-           hover:border-blue-400/60 transition cursor-pointer p-6">
-
-                        <div class="flex flex-col items-center justify-center text-center">
-
-                            <!-- ICON -->
-                            <div class="w-16 h-16 rounded-3xl bg-blue-500/15
-                   flex items-center justify-center text-4xl mb-4">
-
-                                📁
-
-                            </div>
-
-                            <p class="font-black text-lg text-white">
-                                Select Simulation Video
-                            </p>
-
-                            <p class="text-sm text-gray-400 mt-1">
-                                Upload MP4 driving environment
-                            </p>
-
-                        </div>
-
-                    </div>
-
-                    <!-- FILE INFO -->
-                    <div id="videoInfo" class="hidden glass-dark rounded-2xl border border-white/5 p-4">
-
-                        <div class="flex items-center justify-between gap-3">
-
-                            <div class="flex items-center gap-3 min-w-0">
-
-                                <!-- ICON -->
-                                <div class="w-12 h-12 rounded-2xl
-                       bg-blue-500/20
-                       flex items-center justify-center
-                       text-2xl shrink-0">
-
-                                    🎬
-
-                                </div>
-
-                                <!-- FILE NAME -->
-                                <div class="min-w-0">
-
-                                    <p class="text-xs text-gray-500 uppercase">
-                                        Selected Video
-                                    </p>
-
-                                    <p id="videoName" class="font-bold text-white truncate max-w-[220px]">
-                                    </p>
-
-                                </div>
-
-                            </div>
-
-                            <!-- DELETE -->
-                            <button onclick="removeVideo(event)" class="w-10 h-10 rounded-xl
-                   bg-red-500/15
-                   hover:bg-red-500/25
-                   text-red-400
-                   text-xl
-                   font-black
-                   transition">
-
-                                ✕
-
-                            </button>
-
-                        </div>
-
-                    </div>
-
-                    <!-- UPLOAD BUTTON -->
-                    <button onclick="event.stopPropagation(); uploadVideo()"
-                        class="btn-primary w-full py-4 rounded-2xl font-black tracking-wide">
-
-                        Upload & Run
-
-                    </button>
-
                 </div>
 
-            </div>
-            <!-- SPEED -->
-            <div class="glass rounded-[32px] p-6">
+                <!-- SET SPEED -->
+                <div class="glass rounded-2xl p-6">
+                    <h3 class="text-md font-bold uppercase tracking-wider text-purple-400 mb-4">⚡ GIỚI HẠN TỐC ĐỘ: <span
+                            id="speedVal">125</span></h3>
+                    <input type="range" min="80" max="250" value="125"
+                        class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        id="speedSlider" onchange="updateSpeed(this.value)" />
+                </div>
 
-                <div class="flex flex-col items-center">
-
-                    <div class="speed-ring mb-5">
-
-                        <div class="speed-inner">
-
-                            <span id="speedDisplay" class="text-5xl font-black text-white">
-                                140
-                            </span>
-
-                            <span class="text-sm text-gray-500 font-bold">
-                                SPEED
-                            </span>
-
-                        </div>
-
+                <!-- LIVE LOGS -->
+                <div class="glass rounded-2xl p-6">
+                    <h3 class="text-md font-bold uppercase tracking-wider text-emerald-400 mb-3">📋 HỆ THỐNG LOGS THỜI
+                        GIAN THỰC</h3>
+                    <div id="logContainer"
+                        class="h-48 overflow-y-auto space-y-2 text-xs font-mono bg-gray-950/60 p-4 rounded-xl border border-gray-800/80">
                     </div>
-
-                    <!-- SLIDER -->
-                    <input type="range" min="100" max="250" value="140" step="5"
-                        class="range-modern w-full h-2 rounded-full appearance-none cursor-pointer bg-gray-700"
-                        oninput="updateSpeedDisplay(this.value)" onchange="sendSpeed(this.value)" />
-
-                    <!-- SPEED LABELS -->
-                    <div class="w-full flex justify-between mt-3 text-xs text-gray-500 font-bold">
-                        <span>100</span>
-                        <span>150</span>
-                        <span>200</span>
-                        <span>250</span>
-                    </div>
-
                 </div>
-
-            </div>
-            <!-- CONTROL -->
-            <div class="glass rounded-[32px] p-5">
-
-                <div class="mb-5">
-
-                    <h2 class="text-xl font-black">
-                        MANUAL CONTROL
-                    </h2>
-
-                    <p class="text-sm text-gray-500">
-                        Emergency override system
-                    </p>
-
-                </div>
-
-                <div class="grid grid-cols-3 gap-4">
-
-                    <div></div>
-
-                    <!-- FORWARD -->
-                    <button onmousedown="ctrl('F')" onmouseup="ctrl('S')" ontouchstart="ctrl('F')"
-                        ontouchend="ctrl('S')" class="control-btn h-24 rounded-3xl text-3xl">
-                        ▲
-                    </button>
-
-                    <div></div>
-
-                    <!-- LEFT -->
-                    <button onmousedown="ctrl('L')" onmouseup="ctrl('S')" ontouchstart="ctrl('L')"
-                        ontouchend="ctrl('S')" class="control-btn h-24 rounded-3xl text-3xl">
-                        ◀
-                    </button>
-
-                    <!-- STOP -->
-                    <button onclick="ctrl('S')" class="btn-danger h-24 rounded-3xl text-lg font-black tracking-wide">
-                        STOP
-                    </button>
-
-                    <!-- RIGHT -->
-                    <button onmousedown="ctrl('R')" onmouseup="ctrl('S')" ontouchstart="ctrl('R')"
-                        ontouchend="ctrl('S')" class="control-btn h-24 rounded-3xl text-3xl">
-                        ▶
-                    </button>
-
-                    <div></div>
-
-                    <!-- BACK -->
-                    <button onmousedown="ctrl('B')" onmouseup="ctrl('S')" ontouchstart="ctrl('B')"
-                        ontouchend="ctrl('S')" class="control-btn h-24 rounded-3xl text-3xl">
-                        ▼
-                    </button>
-
-                    <div></div>
-
-                </div>
-
             </div>
         </div>
-
     </div>
 
+    <!-- CORE JAVASCRIPT -->
+    <!-- CORE JAVASCRIPT ĐÃ ĐƯỢC TỐI ƯU HÓA -->
     <script>
+        let uploadedFileName = "";
 
-        // =========================
-        // AI START / STOP
-        // =========================
-        function toggleAI(cmd) {
-
-            fetch(`/control?cmd=${cmd}`);
-
-            const btnRun = document.getElementById('btnRunAI');
-            const btnStop = document.getElementById('btnStopAI');
-
-            if (cmd === 'START') {
-
-                btnRun.className =
-                    "btn-success py-5 rounded-3xl font-black tracking-wide text-lg transition";
-
-                btnStop.className =
-                    "bg-gray-800 py-5 rounded-3xl font-black tracking-wide text-lg transition";
-
-            } else {
-
-                btnStop.className =
-                    "btn-danger py-5 rounded-3xl font-black tracking-wide text-lg transition";
-
-                btnRun.className =
-                    "bg-gray-800 py-5 rounded-3xl font-black tracking-wide text-lg transition";
-            }
+        function sendCmd(cmd) {
+            fetch(`/control?cmd=${cmd}`).catch(err => console.error("Lỗi điều khiển:", err));
         }
 
-        // =========================
-        // SWITCH MODE
-        // =========================
-        async function switchMode(mode, filename = "") {
-
-            const btnReality = document.getElementById('btnReality');
-            const containerTest = document.getElementById('containerTest');
-            const modeText = document.getElementById('modeText');
-
-            // RESET
-            btnReality.classList.remove("mode-active");
-            btnReality.classList.add("mode-inactive");
-
-            containerTest.classList.remove("mode-active");
-            containerTest.classList.add("mode-inactive");
-
-            // ACTIVE
-            if (mode === 'reality') {
-
-                btnReality.classList.remove("mode-inactive");
-                btnReality.classList.add("mode-active");
-
-                modeText.innerText = "REALITY";
-
-            } else {
-
-                containerTest.classList.remove("mode-inactive");
-                containerTest.classList.add("mode-active");
-
-                modeText.innerText = "SIMULATION";
-            }
-
-            await fetch(`/set_mode?mode=${mode}&file=${filename}`);
-
-            document.getElementById('mainFeed').src =
-                "/video_feed?t=" + new Date().getTime();
+        function updateSpeed(val) {
+            document.getElementById('speedVal').innerText = val;
+            fetch(`/set_speed?val=${val}`).catch(err => console.error("Lỗi set tốc độ:", err));
         }
 
-        // =========================
-        // UPLOAD VIDEO
-        // =========================
-        async function uploadVideo() {
-
+        // HÀM XỬ LÝ UPLOAD FILE VIDEO LÊN SERVER FASTAPI
+        function uploadVideo() {
             const fileInput = document.getElementById('videoFile');
-
-            if (fileInput.files.length === 0)
-                return alert("Chọn file video!");
+            if (fileInput.files.length === 0) {
+                alert("Vui lòng chọn 1 file video trước!");
+                return;
+            }
 
             const formData = new FormData();
-
             formData.append("file", fileInput.files[0]);
 
-            const res = await fetch("/upload_video", {
+            // Thay đổi text tạm thời để thông báo trạng thái tải lên
+            addTemporaryLog("Đang tải video lên bộ nhớ tạm của máy chủ...");
+
+            fetch("/upload_video", {
                 method: "POST",
                 body: formData
-            });
-
-            const data = await res.json();
-
-            switchMode('test', data.filename);
-        }
-
-        // =========================
-        // LIVE STATUS
-        // =========================
-        setInterval(() => {
-
-            fetch('/get_status')
-                .then(r => r.json())
+            })
+                .then(res => res.json())
                 .then(data => {
+                    uploadedFileName = data.filename;
+                    // Tự động cập nhật giao diện chọn chế độ sang Simulation
+                    document.getElementById('modeSelect').value = "simulation";
 
-                    const logs = document.getElementById('logs');
-
-                    logs.innerHTML = data.logs.join("<br>");
-
-                    logs.scrollTop = logs.scrollHeight;
-
-                    document.getElementById('statusBadge').innerHTML =
-                        data.is_running
-                            ? "<span class='text-green-400'>● AI RUNNING</span>"
-                            : "<span class='text-red-400'>● AI STOPPED</span>";
+                    // Gọi hàm switchMode đồng bộ lên server để ép OpenCV hủy luồng camera IP cũ ngay lập tức
+                    switchMode();
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert("Lỗi upload video hoặc kích thước file vượt giới hạn cho phép!");
                 });
-
-        }, 1000);
-
-
-
-
-
-        // =========================
-        // MANUAL CONTROL
-        // =========================
-        function ctrl(cmd) {
-            fetch(`/control?cmd=${cmd}`);
-        }
-        // DEFAULT
-        window.onload = () => {
-            toggleAI('START');
-            switchMode('reality');
-        };
-        // =========================
-        // SPEED
-        // =========================
-        function updateSpeedDisplay(v) {
-            document.getElementById('speedDisplay').innerText = v;
         }
 
-        function sendSpeed(v) {
-            fetch(`/set_speed?val=${v}`);
-        }
+        // HÀM CHUYỂN ĐỔI CHẾ ĐỘ CHẠY (REALITY / SIMULATION)
+        function switchMode() {
+            const mode = document.getElementById('modeSelect').value;
 
-        // =========================
-        // VIDEO FILE UI
-        // =========================
-        function handleVideoSelect(event) {
-
-            const file = event.target.files[0];
-
-            if (!file)
+            // Nếu chọn simulation mà chưa tải file lên thì cảnh báo người dùng
+            if (mode === "simulation" && !uploadedFileName) {
+                alert("Vui lòng thực hiện UPLOAD file video mô phỏng trước khi đổi chế độ!");
+                document.getElementById('modeSelect').value = "reality";
                 return;
+            }
 
-            // HIDE PLACEHOLDER
-            document.getElementById('uploadPlaceholder')
-                .classList.add('hidden');
-
-            // SHOW FILE INFO
-            document.getElementById('videoInfo')
-                .classList.remove('hidden');
-
-            // FILE NAME
-            document.getElementById('videoName')
-                .innerText = file.name;
+            fetch(`/set_mode?mode=${mode}&file=${uploadedFileName}`)
+                .then(res => res.json())
+                .then(() => {
+                    // Ép thẻ IMG tải lại luồng multipart stream với mã timestamp độc bản `t=` chống trình duyệt cache lại ảnh cũ
+                    const streamImg = document.getElementById('liveStream');
+                    streamImg.src = "/video_feed?t=" + new Date().getTime();
+                })
+                .catch(err => console.error("Lỗi cấu hình chế độ nguồn phát:", err));
         }
 
-        // =========================
-        // REMOVE VIDEO
-        // =========================
-        function removeVideo(event) {
-
-            event.stopPropagation();
-
-            // RESET INPUT
-            const input =
-                document.getElementById('videoFile');
-
-            input.value = "";
-
-            // HIDE FILE INFO
-            document.getElementById('videoInfo')
-                .classList.add('hidden');
-
-            // SHOW PLACEHOLDER
-            document.getElementById('uploadPlaceholder')
-                .classList.remove('hidden');
-
-            // RESET NAME
-            document.getElementById('videoName')
-                .innerText = "";
+        function addTemporaryLog(msg) {
+            const logContainer = document.getElementById('logContainer');
+            const t = new Date().toLocaleTimeString();
+            logContainer.innerHTML += `<div class="py-1 border-b border-gray-900 text-yellow-400 font-bold">[${t}] 🚀 ${msg}</div>`;
+            logContainer.scrollTop = logContainer.scrollHeight;
         }
+
+        function fetchStatus() {
+            fetch('/get_status')
+                .then(res => res.json())
+                .then(data => {
+                    const logContainer = document.getElementById('logContainer');
+                    logContainer.innerHTML = data.logs.map(log => `<div class="py-1 border-b border-gray-900 text-gray-300">${log}</div>`).join('');
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                })
+                .catch(err => console.error("Lỗi đồng bộ trạng thái hệ thống:", err));
+        }
+
+        // Tần suất lấy log tối ưu 600ms giúp hiển thị mượt mà không gây nghẽn băng thông HTTP
+        setInterval(fetchStatus, 600);
     </script>
-
 </body>
 
 </html>
