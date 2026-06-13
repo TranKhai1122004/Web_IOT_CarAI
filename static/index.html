@@ -3,28 +3,33 @@
 
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>AI Autonomous Car Control Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         * {
             scrollbar-width: thin;
             scrollbar-color: #3b82f6 transparent;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
         }
 
         body {
-            overflow-x: hidden;
+            overflow: hidden;
+            /* Triệt tiêu hoàn toàn scrollbar tổng của trang */
             background: radial-gradient(circle at 10% 10%, rgba(59, 130, 246, 0.18), transparent 22%),
                 radial-gradient(circle at 90% 20%, rgba(168, 85, 247, 0.18), transparent 22%),
                 radial-gradient(circle at 50% 100%, rgba(16, 185, 129, 0.12), transparent 30%), #030712;
-            min-height: 100vh;
         }
 
         .glass {
             background: rgba(15, 23, 42, 0.65);
             backdrop-filter: blur(24px);
             border: 1px solid rgba(255, 255, 255, 0.06);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
         }
 
         .control-btn {
@@ -32,8 +37,7 @@
             background: linear-gradient(180deg, #1e293b, #0f172a);
             border: 1px solid rgba(255, 255, 255, 0.08);
             text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-            user-select: none;
-            -webkit-user-select: none;
+            cursor: pointer;
         }
 
         .control-btn:hover {
@@ -50,134 +54,140 @@
     </style>
 </head>
 
-<body class="text-gray-100 font-sans p-4 md:p-8">
+<body class="text-gray-100 font-sans p-4 h-screen flex flex-col justify-between gap-4">
 
-    <div class="max-w-7xl mx-auto space-y-6">
-        <!-- HEADER -->
-        <header class="glass rounded-2xl p-6 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div>
-                <h1
-                    class="text-2xl font-black tracking-wider bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">
-                    AI AUTONOMOUS VEHICLE</h1>
-                <p class="text-sm text-gray-400 mt-1">Hệ thống giám sát vạch kẻ đường Stanley & Nhận diện biển báo</p>
-            </div>
-            <div class="flex gap-3">
-                <button onclick="sendCmd('START')"
-                    class="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-emerald-500 to-teal-600 shadow-lg shadow-emerald-900/30 hover:brightness-110 active:scale-95 transition">START
-                    AI RUN</button>
-                <button onclick="sendCmd('STOP_AI')"
-                    class="px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-red-500 to-pink-600 shadow-lg shadow-red-900/30 hover:brightness-110 active:scale-95 transition">STOP
-                    AI (MANUAL)</button>
-            </div>
-        </header>
+    <header class="glass rounded-2xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
+        <div>
+            <h1
+                class="text-xl font-black tracking-wider bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">
+                AI AUTONOMOUS VEHICLE
+            </h1>
+            <p class="text-xs text-gray-400 mt-0.5">Hệ thống giám sát vạch kẻ đường Stanley & Nhận diện biển báo</p>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="sendCmd('START')"
+                class="px-5 py-2 rounded-xl font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-600 shadow-lg shadow-emerald-900/30 hover:brightness-110 active:scale-95 transition">
+                START AI RUN
+            </button>
+            <button onclick="sendCmd('STOP_AI')"
+                class="px-5 py-2 rounded-xl font-bold text-sm bg-gradient-to-r from-red-500 to-pink-600 shadow-lg shadow-red-900/30 hover:brightness-110 active:scale-95 transition">
+                STOP AI (MANUAL)
+            </button>
+        </div>
+    </header>
 
-        <!-- MAIN LAYOUT -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- LEFT & CENTER: VIDEO MANAGEMENT & CAMERA STREAM -->
-            <div class="lg:col-span-2 space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 overflow-hidden">
 
-                <!-- KHU VỰC UPLOAD FILE & CHỌN NGUỒN PHÁT (ĐÃ THÊM LẠI) -->
-                <div class="glass rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-                    <div>
-                        <h3 class="text-sm font-bold uppercase tracking-wider text-blue-400 mb-2">📁 Tải Lên Video Giả
-                            Lập</h3>
-                        <div class="flex gap-2">
-                            <input type="file" id="videoFile" accept="video/*"
-                                class="block w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 bg-gray-900/50 rounded-lg border border-gray-800 p-1 cursor-pointer" />
-                            <button onclick="uploadVideo()"
-                                class="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg text-xs font-bold hover:brightness-110 active:scale-95 transition">UPLOAD</button>
-                        </div>
-                    </div>
-                    <div>
-                        <h3 class="text-sm font-bold uppercase tracking-wider text-purple-400 mb-2">🌐 Cấu Hình Nguồn
-                            Video</h3>
-                        <div class="flex gap-2">
-                            <select id="modeSelect" onchange="switchMode()"
-                                class="bg-gray-900/80 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-purple-500 w-full">
-                                <option value="reality">Live Camera (IP Cam từ xe)</option>
-                                <option value="simulation">Simulation (Chạy Video Giả Lập)</option>
-                            </select>
-                        </div>
+        <div class="lg:col-span-2 flex flex-col gap-4 overflow-hidden h-full">
+
+            <div class="glass rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-center shrink-0">
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 mb-1.5">📁 Tải Lên Video Giả Lập
+                    </h3>
+                    <div class="flex gap-2">
+                        <input type="file" id="videoFile" accept="video/*"
+                            class="block w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 bg-gray-900/50 rounded-lg border border-gray-800 p-0.5 cursor-pointer" />
+                        <button onclick="uploadVideo()"
+                            class="px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg text-xs font-bold hover:brightness-110 active:scale-95 transition">UPLOAD</button>
                     </div>
                 </div>
-
-                <!-- LIVE VIDEO STREAM -->
-                <div class="glass rounded-2xl p-4 overflow-hidden flex items-center justify-center">
-                    <img id="liveStream" src="/video_feed"
-                        class="w-full h-auto rounded-xl object-cover border border-gray-800" alt="Live Camera" />
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-purple-400 mb-1.5">🌐 Cấu Hình Nguồn
+                        Video</h3>
+                    <div class="flex gap-2">
+                        <select id="modeSelect" onchange="switchMode()"
+                            class="bg-gray-900/80 border border-gray-800 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-purple-500 w-full">
+                            <option value="reality">Live Camera (IP Cam từ xe)</option>
+                            <option value="simulation">Simulation (Chạy Video Giả Lập)</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
-            <!-- RIGHT: CONTROL CONSOLE -->
-            <div class="space-y-6">
-                <!-- MANUAL REMOTE PAD -->
-                <div class="glass rounded-2xl p-6">
-                    <h3 class="text-md font-bold uppercase tracking-wider text-blue-400 mb-6 flex items-center gap-2">
-                        🕹️ BÀN ĐIỀU KHIỂN THỦ CÔNG (NHẤP NHẢ)</h3>
+            <div class="glass rounded-2xl p-3 flex-1 flex items-center justify-center overflow-hidden bg-gray-950/40">
+                <img id="liveStream" src="/video_feed"
+                    class="max-w-full max-h-full rounded-xl object-contain border border-gray-800/60"
+                    alt="Live Camera" />
+            </div>
+        </div>
 
-                    <!-- D-PAD INTERFACE -->
-                    <div class="flex flex-col items-center gap-3 my-4">
-                        <!-- NÚT TIẾN (F) -> NHẢ RA DỪNG (S) -->
-                        <button onmousedown="sendCmd('F')" onmouseup="sendCmd('S')" onmouseleave="sendCmd('S')"
-                            ontouchstart="sendCmd('F')" ontouchend="sendCmd('S')"
-                            class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-emerald-400">▲</button>
+        <div class="flex flex-col gap-4 overflow-hidden h-full">
 
-                        <div class="flex gap-3">
-                            <!-- NÚT TRÁI (L) -> NHẢ RA THẲNG LÁI (G) -->
-                            <button onmousedown="sendCmd('L')" onmouseup="sendCmd('G')" onmouseleave="sendCmd('G')"
-                                ontouchstart="sendCmd('L')" ontouchend="sendCmd('G')"
-                                class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-yellow-400">◀</button>
+            <div class="glass rounded-2xl p-4 flex flex-col justify-between flex-1 min-h-[240px]">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-2">
+                    🕹️ ĐIỀU KHIỂN THỦ CÔNG (GIỮ CHẠY - NHẢ DỪNG)
+                </h3>
 
-                            <!-- NÚT TÂM (G) -->
-                            <button onclick="sendCmd('G')"
-                                class="control-btn w-16 h-16 rounded-xl font-bold text-sm text-gray-300">TÂM</button>
+                <div class="flex flex-col items-center gap-2 my-auto">
+                    <button onmousedown="event.preventDefault(); sendCmd('F')"
+                        onmouseup="event.preventDefault(); sendCmd('S')" onmouseleave="sendCmd('S')"
+                        ontouchstart="event.preventDefault(); sendCmd('F')"
+                        ontouchend="event.preventDefault(); sendCmd('S')"
+                        class="control-btn w-12 h-12 rounded-xl font-bold text-lg text-blue-400 flex items-center justify-center">▲</button>
 
-                            <!-- NÚT PHẢI (R) -> NHẢ RA THẲNG LÁI (G) -->
-                            <button onmousedown="sendCmd('R')" onmouseup="sendCmd('G')" onmouseleave="sendCmd('G')"
-                                ontouchstart="sendCmd('R')" ontouchend="sendCmd('G')"
-                                class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-yellow-400">▶</button>
+                    <div class="flex flex-col items-center gap-1">
+                        <div class="text-xs text-gray-400 font-mono">
+                            ◀ Trái &nbsp;&nbsp;&nbsp; ◆ Giữa &nbsp;&nbsp;&nbsp; ▶ Phải
                         </div>
-
-                        <!-- NÚT LÙI (B) -> NHẢ RA DỪNG (S) -->
-                        <button onmousedown="sendCmd('B')" onmouseup="sendCmd('S')" onmouseleave="sendCmd('S')"
-                            ontouchstart="sendCmd('B')" ontouchend="sendCmd('S')"
-                            class="control-btn w-16 h-16 rounded-xl font-bold text-xl text-red-400">▼</button>
+                        <input type="range" id="steeringSlider" min="-1" max="1" step="1" value="0"
+                            oninput="handleSteering(this.value)" class="w-48 accent-blue-500">
                     </div>
 
-                    <div class="w-full mt-6">
-                        <!-- PHANH KHẨN CẤP -->
-                        <button onclick="sendCmd('S')"
-                            class="w-full py-4 rounded-xl font-black bg-gradient-to-r from-amber-500 to-orange-600 shadow-md hover:brightness-110 text-white">PHANH
-                            KHẨN CẤP (STOP)</button>
-                    </div>
+                    <button onmousedown="event.preventDefault(); sendCmd('B')"
+                        onmouseup="event.preventDefault(); sendCmd('S')" onmouseleave="sendCmd('S')"
+                        ontouchstart="event.preventDefault(); sendCmd('B')"
+                        ontouchend="event.preventDefault(); sendCmd('S')"
+                        class="control-btn w-12 h-12 rounded-xl font-bold text-lg text-blue-400 flex items-center justify-center">▼</button>
                 </div>
 
-                <!-- SET SPEED -->
-                <div class="glass rounded-2xl p-6">
-                    <h3 class="text-md font-bold uppercase tracking-wider text-purple-400 mb-4">⚡ GIỚI HẠN TỐC ĐỘ: <span
-                            id="speedVal">125</span></h3>
-                    <input type="range" min="80" max="250" value="125"
-                        class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                        id="speedSlider" onchange="updateSpeed(this.value)" />
+                <div class="w-full">
+                    <button onclick="sendCmd('S')"
+                        class="w-full py-2.5 rounded-xl font-black text-xs bg-gradient-to-r from-amber-500 to-orange-600 shadow-md hover:brightness-110 text-white transition">
+                        PHANH KHẨN CẤP (STOP)
+                    </button>
                 </div>
+            </div>
 
-                <!-- LIVE LOGS -->
-                <div class="glass rounded-2xl p-6">
-                    <h3 class="text-md font-bold uppercase tracking-wider text-emerald-400 mb-3">📋 HỆ THỐNG LOGS THỜI
-                        GIAN THỰC</h3>
-                    <div id="logContainer"
-                        class="h-48 overflow-y-auto space-y-2 text-xs font-mono bg-gray-950/60 p-4 rounded-xl border border-gray-800/80">
-                    </div>
+            <div class="glass rounded-2xl p-4 shrink-0">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-purple-400 mb-2">
+                    ⚡ GIỚI HẠN TỐC ĐỘ: <span id="speedVal"
+                        class="font-mono bg-gray-900 px-2 py-0.5 rounded border border-gray-800 text-purple-300">125</span>
+                </h3>
+                <input type="range" min="80" max="250" value="125"
+                    class="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                    id="speedSlider" onchange="updateSpeed(this.value)" />
+            </div>
+
+            <div class="glass rounded-2xl p-4 flex flex-col flex-1 h-0 min-h-[140px]">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2 shrink-0">
+                    📋 LOGS THỜI GIAN THỰC
+                </h3>
+                <div id="logContainer"
+                    class="flex-1 overflow-y-auto space-y-1.5 text-[11px] font-mono bg-gray-950/60 p-3 rounded-xl border border-gray-800/80">
                 </div>
             </div>
         </div>
+
     </div>
 
-    <!-- CORE JAVASCRIPT -->
-    <!-- CORE JAVASCRIPT ĐÃ ĐƯỢC TỐI ƯU HÓA -->
     <script>
         let uploadedFileName = "";
+        let lastSteer = "G";
 
+        document.querySelectorAll('.control-btn').forEach(btn => {
+            btn.addEventListener('contextmenu', e => e.preventDefault());
+        });
+
+        function handleSteering(val) {
+            let cmd = "G";
+            if (val == -1) cmd = "L";
+            else if (val == 1) cmd = "R";
+
+            if (cmd !== lastSteer) {
+                sendCmd(cmd);
+                lastSteer = cmd;
+            }
+        }
         function sendCmd(cmd) {
             fetch(`/control?cmd=${cmd}`).catch(err => console.error("Lỗi điều khiển:", err));
         }
@@ -187,7 +197,6 @@
             fetch(`/set_speed?val=${val}`).catch(err => console.error("Lỗi set tốc độ:", err));
         }
 
-        // HÀM XỬ LÝ UPLOAD FILE VIDEO LÊN SERVER FASTAPI
         function uploadVideo() {
             const fileInput = document.getElementById('videoFile');
             if (fileInput.files.length === 0) {
@@ -197,8 +206,6 @@
 
             const formData = new FormData();
             formData.append("file", fileInput.files[0]);
-
-            // Thay đổi text tạm thời để thông báo trạng thái tải lên
             addTemporaryLog("Đang tải video lên bộ nhớ tạm của máy chủ...");
 
             fetch("/upload_video", {
@@ -208,10 +215,7 @@
                 .then(res => res.json())
                 .then(data => {
                     uploadedFileName = data.filename;
-                    // Tự động cập nhật giao diện chọn chế độ sang Simulation
                     document.getElementById('modeSelect').value = "simulation";
-
-                    // Gọi hàm switchMode đồng bộ lên server để ép OpenCV hủy luồng camera IP cũ ngay lập tức
                     switchMode();
                 })
                 .catch(err => {
@@ -220,11 +224,9 @@
                 });
         }
 
-        // HÀM CHUYỂN ĐỔI CHẾ ĐỘ CHẠY (REALITY / SIMULATION)
         function switchMode() {
             const mode = document.getElementById('modeSelect').value;
 
-            // Nếu chọn simulation mà chưa tải file lên thì cảnh báo người dùng
             if (mode === "simulation" && !uploadedFileName) {
                 alert("Vui lòng thực hiện UPLOAD file video mô phỏng trước khi đổi chế độ!");
                 document.getElementById('modeSelect').value = "reality";
@@ -234,7 +236,6 @@
             fetch(`/set_mode?mode=${mode}&file=${uploadedFileName}`)
                 .then(res => res.json())
                 .then(() => {
-                    // Ép thẻ IMG tải lại luồng multipart stream với mã timestamp độc bản `t=` chống trình duyệt cache lại ảnh cũ
                     const streamImg = document.getElementById('liveStream');
                     streamImg.src = "/video_feed?t=" + new Date().getTime();
                 })
@@ -244,7 +245,7 @@
         function addTemporaryLog(msg) {
             const logContainer = document.getElementById('logContainer');
             const t = new Date().toLocaleTimeString();
-            logContainer.innerHTML += `<div class="py-1 border-b border-gray-900 text-yellow-400 font-bold">[${t}] 🚀 ${msg}</div>`;
+            logContainer.innerHTML += `<div class="py-0.5 border-b border-gray-900 text-yellow-400 font-bold">[${t}] 🚀 ${msg}</div>`;
             logContainer.scrollTop = logContainer.scrollHeight;
         }
 
@@ -253,14 +254,26 @@
                 .then(res => res.json())
                 .then(data => {
                     const logContainer = document.getElementById('logContainer');
-                    logContainer.innerHTML = data.logs.map(log => `<div class="py-1 border-b border-gray-900 text-gray-300">${log}</div>`).join('');
+
+                    logContainer.innerHTML = data.logs.map(log => {
+                        let colorClass = "text-gray-300";
+                        if (log.includes("🚶")) colorClass = "text-yellow-400 font-semibold";
+                        if (log.includes("🛑") || log.includes("💥")) colorClass = "text-red-400 font-bold";
+                        if (log.includes("🚀") || log.includes("✅")) colorClass = "text-emerald-400 font-bold";
+                        return `<div class="py-0.5 border-b border-gray-900/40 ${colorClass}">${log}</div>`;
+                    }).join('');
+
                     logContainer.scrollTop = logContainer.scrollHeight;
+
+                    if (!document.activeElement || document.activeElement.id !== 'speedSlider') {
+                        document.getElementById('speedSlider').value = data.speed;
+                        document.getElementById('speedVal').innerText = data.speed;
+                    }
                 })
                 .catch(err => console.error("Lỗi đồng bộ trạng thái hệ thống:", err));
         }
 
-        // Tần suất lấy log tối ưu 600ms giúp hiển thị mượt mà không gây nghẽn băng thông HTTP
-        setInterval(fetchStatus, 600);
+        setInterval(fetchStatus, 400);
     </script>
 </body>
 

@@ -3,10 +3,10 @@ import numpy as np
 import time
 import os
 import shutil
+import threading
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from torch import mode
 from ultralytics import YOLO
 import paho.mqtt.client as mqtt
 
@@ -15,44 +15,36 @@ app = FastAPI()
 if not os.path.exists("uploads"):
     os.makedirs("uploads")
 
-# =========================================================
-# MQTT CONFIG
-# =========================================================
-MQTT_CONF = {
-    # "server": "172.20.10.2",
-    "server": "192.168.100.162",
-    "port": 1883,
-}
-
+MQTT_CONF = {"server": "192.168.100.162", "port": 1883}
 TOPIC_SPEED = "remote_car/speed"
 TOPIC_DIRECTION = "remote_car/direction"
 
-# =========================================================
-# TUNED SERVO REAL ANGLE (Đồng bộ với ESP32 đã tuning)
-# =========================================================
-SERVO_LEFT = 107
+# Cấu hình cứng của xe: Lớn là TRÁI, Nhỏ là PHẢI
+SERVO_LEFT = 115
 SERVO_CENTER = 87
-SERVO_RIGHT = 67
+SERVO_RIGHT = 59
 
 
 class GlobalState:
-    mode = "reality"
-    # video_source = "http://172.20.10.4:8080/video"
-    video_source = "http://192.168.100.166:8080/video"
-    is_running = True  # True: Chế độ tự hành (AI), False: Chế độ thủ công (Manual)
-    logs = []
-    current_limit_speed = 120
-    last_sign_time = 0
-    is_on_crosswalk = False
-    original_speed_before_cross = 120
-    base_motion_state = "F"
-    last_speed_cmd = 0
-    last_log_content = ""
-    last_angle = 0.0
-    last_angle_sent = -1
-    last_turn_time = 0.0
-    last_valid_lane_width = 240.0
-    camera_offset = 0
+    def __init__(self):
+        self.mode = "reality"
+        self.video_source = "http://192.168.100.166:8080/video"
+        self.is_running = True
+        self.logs = []
+        self.current_limit_speed = 120
+        self.last_sign_time = 0
+        self.is_on_crosswalk = False
+        self.original_speed_before_cross = 120
+        self.base_motion_state = "F"
+        self.last_speed_cmd = 0
+        self.last_log_content = ""
+        self.last_angle = 0.0
+        self.last_angle_sent = SERVO_CENTER
+        self.actual_servo_angle = SERVO_CENTER
+        self.last_turn_time = 0.0
+        self.last_valid_lane_width = 360
+        self.camera_offset = 0
+        self.latest_processed_frame = None
 
 
 state = GlobalState()
@@ -79,9 +71,6 @@ except Exception as e:
     print(f"⚠️ MQTT ERROR: {e}")
 
 
-# =========================================================
-# LOGS & MQTT UTILS
-# =========================================================
 def add_log(msg):
     if msg != state.last_log_content:
         t = time.strftime("%H:%M:%S")
@@ -98,10 +87,7 @@ def send_mqtt(topic, msg):
         add_log(f"MQTT Error: {e}")
 
 
-# =========================================================
-# LOAD MODEL & SPEED MAP
-# =========================================================
-model_sign = YOLO("models/WalkCross_Speed_Stop_Detec.pt")
+model_sign = YOLO("models/Speed_Stop_Cross.pt")
 model_lane = YOLO("models/LaneSeg.pt")
 
 SPEED_MAP = {
@@ -114,79 +100,83 @@ SPEED_MAP = {
     "speed_limit_80": 180,
     "speed_limit_90": 200,
     "speed_limit_100": 220,
-    # "stop": "S",
     "stop": 0,
 }
 
 
+def get_perspective_matrices(w, h):
+    src_pts = np.float32([[162, 168], [458, 172], [2, 473], [591, 477]])
+    dst_pts = np.float32(
+        [
+            [140, 0],      # top left
+            [500, 0],      # top right
+            [500, 480],    # bottom right
+            [140, 480],    # bottom left
+        ]
+    )
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    Minv = cv2.getPerspectiveTransform(dst_pts, src_pts)
+    return M, Minv, src_pts
+
+
 # =========================================================
-# FRAME GENERATOR (XỬ LÝ CORE AI / STANLEY - ĐÃ FIX KẸT LUỒNG)
+# BACKGROUND THREAD XỬ LÝ AI + BIRD'S EYE VIEW
 # =========================================================
-def frame_generator():
+def ai_processing_loop():
     last_active_source = None
     cap = None
 
     while True:
-        # Kiểm tra xem nguồn dữ liệu hệ thống có bị thay đổi từ bên ngoài (API) hay không
         if last_active_source != state.video_source:
             if cap is not None:
                 cap.release()
-                add_log("🔄 Đang giải phóng luồng video cũ...")
-
             last_active_source = state.video_source
             cap = cv2.VideoCapture(last_active_source)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            add_log(f"🎬 Khởi tạo thành công nguồn mới: {last_active_source}")
+            add_log(f"🎬 Khởi tạo nguồn Video: {last_active_source}")
 
-        # Trường hợp thiết bị chưa sẵn sàng hoặc mất kết nối
         if cap is None or not cap.isOpened():
-            add_log("❌ Không thể kết nối tới nguồn Video, thử lại sau 1 giây...")
             time.sleep(1)
             continue
 
-        # Đọc dữ liệu từ luồng hoạt động
         success, frame = cap.read()
-
         if not success:
-            # Nếu đang chạy giả lập video (Simulation) mà hết video -> Tự động tua lại đầu video để lặp vô hạn
             if state.mode == "simulation":
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                time.sleep(0.05)
                 continue
             else:
-                add_log("⚠️ Luồng Reality mất tín hiệu hoặc camera ngắt kết nối.")
                 if cap is not None:
                     cap.release()
-                last_active_source = None  # Ép vòng lặp ngoài khởi tạo lại ở chu kỳ sau
-                time.sleep(1)
+                last_active_source = None
+                time.sleep(0.5)
                 continue
 
         view_frame = frame.copy()
         h, w, _ = frame.shape
-        mid_x = (w // 2) + state.camera_offset
 
-        # CHỈ XỬ LÝ ĐIỀU KHIỂN AI KHI "state.is_running == True"
+        M, Minv, src_pts = get_perspective_matrices(w, h)
+        
+        # CHUẨN HÓA TÂM TRỤC XE TRÊN HỆ BEV
+        mid_x_bev = 320 + state.camera_offset
+
         if state.is_running:
             res_sign = model_sign(frame, conf=0.45, imgsz=640, verbose=False)[0]
             res_lane = model_lane(
                 frame, conf=0.4, imgsz=320, verbose=False, task="segment"
             )[0]
 
-            # --- 1. TỰ ĐỘNG TÔ MÀU LANE THEO MÔ HÌNH SEGMENTATION ---
             if res_lane.masks is not None:
                 view_frame = res_lane.plot(boxes=False)
 
-            # --- 2. NHẬN DIỆN BIỂN BÁO CẢNH BÁO & VẼ KHUNG ĐÈ LÊN ---
+            # --- XỬ LÝ BIỂN BÁO ---
             found_walk_cross = False
             if res_sign.boxes is not None:
                 if len(res_sign.boxes) > 0:
                     view_frame = res_sign.plot(img=view_frame)
-
                 for box in res_sign.boxes:
                     label = model_sign.names[int(box.cls[0])]
                     x_c = float(box.xywh[0][0])
                     conf = float(box.conf[0])
-
                     if label == "walk_cross":
                         found_walk_cross = True
                         if not state.is_on_crosswalk:
@@ -199,45 +189,49 @@ def frame_generator():
                             )
                             send_mqtt(TOPIC_SPEED, f"s{target}")
                             add_log(f"🚶 WalkCross -> Giảm tốc: {target}")
-
                     elif label in SPEED_MAP:
                         now = time.time()
                         if x_c > (w * 0.4) and (now - state.last_sign_time > 4):
                             limit = SPEED_MAP[label]
                             if label == "stop" and conf > 0.8:
-                                # send_mqtt(TOPIC_DIRECTION, "S")
-                                # state.base_motion_state = "S"
-                                # state.is_running = False
-                                add_log("🛑 BIỂN BÁO STOP -> DỪNG XE & TẮT AI")
+                                state.is_running = False
+                                state.base_motion_state = "S"
+                                send_mqtt(TOPIC_SPEED, "S")
+                                send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
+                                state.last_speed_cmd = "S"
+                                state.last_angle_sent = SERVO_CENTER
+                                add_log("🛑 BIỂN BÁO STOP -> DỪNG XE & TẮT AI TỰ ĐỘNG")
                             else:
                                 state.current_limit_speed = limit
                                 send_mqtt(TOPIC_SPEED, f"s{limit}")
                                 add_log(f"📉 Biển báo {label} -> Tốc độ: {limit}")
-                            state.last_sign_time = now
+                                state.last_sign_time = now
 
             if state.is_on_crosswalk and not found_walk_cross:
                 state.is_on_crosswalk = False
                 send_mqtt(TOPIC_SPEED, f"s{state.original_speed_before_cross}")
                 add_log(
-                    f"✅ Hết vạch qua đường -> Khôi phục: {state.original_speed_before_cross}"
+                    f"✅ Hết vạch -> Khôi phục: {state.original_speed_before_cross}"
                 )
 
-            # --- 3. THUẬT TOÁN ĐIỀU HƯỚNG STANLEY (ĐÃ SỬA LỖI MƯỢT MÀ) ---
-            if res_lane.masks is not None:
+            # --- XỬ LÝ LANE VỚI BIRD'S EYE VIEW ---
+            if res_lane.masks is not None and state.base_motion_state != "S":
                 try:
-                    lane_mask = res_lane.masks.data[0].cpu().numpy()
+                    lane_mask = np.max(res_lane.masks.data.cpu().numpy(), axis=0)
                     lane_mask = cv2.resize(lane_mask, (w, h))
 
-                    roi_y_start, roi_y_end = int(h * 0.65), int(h * 0.95)
-                    roi = lane_mask[roi_y_start:roi_y_end, :]
+                    warped_mask = cv2.warpPerspective(
+                        lane_mask, M, (w, h), flags=cv2.INTER_LINEAR
+                    )
+
+                    roi_y_start, roi_y_end = 50, 450
+                    roi = warped_mask[roi_y_start:roi_y_end, :]
                     y_indices, x_indices = np.where(roi > 0.5)
                     y_indices += roi_y_start
 
                     if len(x_indices) > 50:
-                        left_lane_mask, right_lane_mask = (
-                            x_indices < mid_x,
-                            x_indices >= mid_x,
-                        )
+                        left_lane_mask = x_indices < mid_x_bev
+                        right_lane_mask = x_indices >= mid_x_bev
                         left_x, left_y = (
                             x_indices[left_lane_mask],
                             y_indices[left_lane_mask],
@@ -247,185 +241,200 @@ def frame_generator():
                             y_indices[right_lane_mask],
                         )
 
-                        sample_y = np.linspace(roi_y_start, roi_y_end, 6)
+                        sample_y = np.linspace(roi_y_start + 30, roi_y_end - 20, 7)
                         center_line_x = []
 
                         for y in sample_y:
-                            left_points = left_x[np.abs(left_y - y) < 15]
-                            right_points = right_x[np.abs(right_y - y) < 15]
-                            has_left, has_right = (
-                                len(left_points) > 3,
-                                len(right_points) > 3,
-                            )
+                            left_points = left_x[np.abs(left_y - y) < 20]
+                            right_points = right_x[np.abs(right_y - y) < 20]
+                            has_left = len(left_points) > 3
+                            has_right = len(right_points) > 3
 
                             if has_left and has_right:
-                                measured_width = np.mean(right_points) - np.mean(
-                                    left_points
-                                )
-                                if 140 < measured_width < 380:
+                                measured_width = np.mean(right_points) - np.mean(left_points)
+                                if 280 < measured_width < 440:
                                     state.last_valid_lane_width = measured_width
                                 cx = (np.mean(left_points) + np.mean(right_points)) / 2
                                 center_line_x.append(cx)
                             elif has_left:
-                                cx = np.mean(left_points) + (
-                                    state.last_valid_lane_width / 2
-                                )
+                                cx = np.mean(left_points) + (state.last_valid_lane_width / 2)
                                 center_line_x.append(cx)
                             elif has_right:
-                                cx = np.mean(right_points) - (
-                                    state.last_valid_lane_width / 2
-                                )
+                                cx = np.mean(right_points) - (state.last_valid_lane_width / 2)
                                 center_line_x.append(cx)
 
                         center_line_x = np.array(center_line_x)
 
-                        if len(center_line_x) >= 4 and state.base_motion_state != "S":
+                        if len(center_line_x) >= 2:
+                            target_x = center_line_x[-1]
+                            error_pixels = target_x - mid_x_bev
 
-                            # =========================================================
-                            # 1. TÍNH TOÁN CROSS-TRACK & HEADING
-                            # =========================================================
-                            target_near_x = center_line_x[-1]
+                            deadzone_pixels = 4
 
-                            # Sai số lệch tâm lane
-                            error_e = (target_near_x - mid_x) / (w / 2.0)
+                            if abs(error_pixels) < deadzone_pixels:
+                                servo_angle = SERVO_CENTER
+                            else:
+                                if error_pixels > 0:
+                                    effective_error = error_pixels - deadzone_pixels
+                                else:
+                                    effective_error = error_pixels + deadzone_pixels
 
-                            # Góc hướng lane
-                            dx = center_line_x[0] - center_line_x[-1]
-                            dy = sample_y[0] - sample_y[-1]
+                                max_effective_error = 150
+                                effective_error = np.clip(
+                                    effective_error,
+                                    -max_effective_error,
+                                    max_effective_error,
+                                )
 
-                            heading_theta = np.arctan2(dx, -dy)
-                            heading_deg = np.degrees(heading_theta)
+                                # ĐẢO LẠI THEO HỆ THỐNG ĐẶT NGƯỢC CỦA KHẢI:
+                                # err > 0 (Tâm lệch PHẢI) -> Tăng góc tiến về phía SERVO_LEFT
+                                # err < 0 (Tâm lệch TRÁI) -> Giảm góc tiến về phía SERVO_RIGHT
+                                if effective_error > 0:  
+                                    ratio = effective_error / max_effective_error
+                                    servo_angle = SERVO_CENTER + ratio * (
+                                        SERVO_LEFT - SERVO_CENTER
+                                    )
+                                else:  
+                                    ratio = abs(effective_error) / max_effective_error
+                                    servo_angle = SERVO_CENTER - ratio * (
+                                        SERVO_CENTER - SERVO_RIGHT
+                                    )
 
-                            # =========================================================
-                            # 2. HUMAN-LIKE STABILIZER
-                            # =========================================================
-                            # Nếu xe đã gần song song lane
-                            # và lệch không đáng kể
-                            # => ưu tiên đi thẳng thay vì kéo liên tục về tâm
-
-                            if abs(heading_deg) < 4 and abs(error_e) < 0.12:
-                                error_e = 0
-
-                            # =========================================================
-                            # 3. DEAD-BAND ANTI OSCILLATION
-                            # =========================================================
-                            # Vùng chết chống rung lắc quanh tâm
-
-                            if abs(error_e) < 0.05:
-                                error_e = 0
-
-                            # =========================================================
-                            # 4. STANLEY CONTROL
-                            # =========================================================
-                            calc_v = max(100, state.current_limit_speed)
-
-                            # Gain mềm hơn
-                            k_gain = 2.2
-
-                            steering_angle_rad = -heading_theta + np.arctan2(
-                                k_gain * error_e, calc_v
+                            servo_angle = int(
+                                np.clip(servo_angle, SERVO_RIGHT, SERVO_LEFT)
                             )
 
-                            steering_angle_deg = np.clip(
-                                np.degrees(steering_angle_rad), -30, 30
+                            # --- Bộ lọc thích ứng Dynamic Alpha ---
+                            abs_err = abs(error_pixels)
+                            if abs_err > 60:    
+                                alpha = 0.25 
+                            elif abs_err > 25:  
+                                alpha = 0.50 
+                            else:               
+                                alpha = 0.75 
+
+                            state.actual_servo_angle = int(
+                                alpha * state.actual_servo_angle
+                                + (1 - alpha) * servo_angle
+                            )
+                            final_servo = np.clip(
+                                state.actual_servo_angle, SERVO_RIGHT, SERVO_LEFT
                             )
 
-                            # =========================================================
-                            # 5. STRAIGHT PRIORITY MODE
-                            # =========================================================
-                            # Nếu xe đã align lane khá tốt
-                            # => ép servo đi thẳng để tránh hunting
-
-                            if abs(heading_deg) < 2.5 and abs(error_e) < 0.08:
-                                steering_angle_deg = 0
-
-                            # =========================================================
-                            # 6. EMA FILTER
-                            # =========================================================
-                            alpha = 0.88
-
-                            steering_angle_deg = (
-                                alpha * state.last_angle
-                                + (1 - alpha) * steering_angle_deg
-                            )
-
-                            state.last_angle = steering_angle_deg
-
-                            # 4. Tính toán Tốc độ tối ưu theo góc rẽ
-                            abs_angle = abs(steering_angle_deg)
+                            # Điều tốc thông minh
+                            abs_error_pixels = abs(error_pixels)
                             base_speed = state.current_limit_speed
-                            if abs_angle > 10:  # Vào cua gắt
-                                target_speed = max(100, int(base_speed * 0.65))
+
+                            if abs_error_pixels > 60:
+                                speed_factor = max(
+                                    0.65, 1.0 - (abs_error_pixels - 60) / 200
+                                )
+                                target_speed = max(95, int(base_speed * speed_factor))
                             else:
                                 target_speed = base_speed
 
-                            if target_speed != state.last_speed_cmd:
+                            if f"s{target_speed}" != str(state.last_speed_cmd):
                                 send_mqtt(TOPIC_SPEED, f"s{target_speed}")
-                                state.last_speed_cmd = target_speed
+                                state.last_speed_cmd = f"s{target_speed}"
 
-                            # 5. ÁNH XẠ GÓC SERVO CHUẨN XÁC (Sửa lỗi lệch tâm hình học)
+                            # Gửi lệnh lái mượt định kỳ 0.03s
                             now = time.time()
-                            if (
-                                now - state.last_turn_time > 0.03
-                            ):  # Tăng tần suất gửi lái lên ~33Hz (0.03s)
-                                if steering_angle_deg >= 0:
-                                    # Cua Trái: từ CENTER (87) tiến dần lên LEFT (115)
-                                    servo_angle = int(
-                                        SERVO_CENTER
-                                        + (steering_angle_deg / 30.0)
-                                        * (SERVO_LEFT - SERVO_CENTER)
-                                    )
-                                else:
-                                    # Cua Phải: từ CENTER (87) lùi dần về RIGHT (65)
-                                    servo_angle = int(
-                                        SERVO_CENTER
-                                        + (steering_angle_deg / 30.0)
-                                        * (SERVO_CENTER - SERVO_RIGHT)
-                                    )
-
-                                    servo_angle = np.clip(
-                                        servo_angle, SERVO_RIGHT, SERVO_LEFT
-                                    )
-
-                                # Chỉ gửi khi góc thực sự thay đổi để tránh tràn băng thông MQTT
-                                if abs(servo_angle - state.last_angle_sent) >= 1:
-                                    send_mqtt(TOPIC_DIRECTION, str(servo_angle))
-                                    state.last_angle_sent = servo_angle
+                            if now - state.last_turn_time > 0.03:
+                                print(
+                                    f" [CONTROL] width={state.last_valid_lane_width:.1f} "
+                                    f"err={error_pixels:.1f} "
+                                    f"servo={final_servo}"
+                                )
+                                send_mqtt(TOPIC_DIRECTION, str(final_servo))
+                                state.last_angle_sent = final_servo
+                                if abs(final_servo - SERVO_CENTER) > 2:
                                     add_log(
-                                        f"🎯 Stanley -> Servo: {servo_angle}° | Err: {error_e:.2f}"
+                                        f"🚗 Lane -> Servo:{final_servo}° Err:{error_pixels:.0f}px"
                                     )
                                 state.last_turn_time = now
 
-                            for i in range(len(center_line_x)):
-                                cv2.circle(
-                                    view_frame,
-                                    (int(center_line_x[i]), int(sample_y[i])),
-                                    5,
-                                    (0, 0, 255),
-                                    -1,
-                                )
+                        else:
+                            if state.last_angle_sent != SERVO_CENTER:
+                                send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
+                                state.last_angle_sent = SERVO_CENTER
+                            state.actual_servo_angle = SERVO_CENTER
+
+                        # Vẽ visualization chuẩn tọa độ gốc
+                        for i in range(len(center_line_x)):
+                            pt_bev = np.array(
+                                [[[center_line_x[i], sample_y[i]]]], dtype=np.float32
+                            )
+                            pt_original = cv2.perspectiveTransform(pt_bev, Minv)[0][0]
+                            color = (
+                                (0, 255, 0)
+                                if i == len(center_line_x) - 1
+                                else (0, 0, 255)
+                            )
+                            cv2.circle(
+                                view_frame,
+                                (int(pt_original[0]), int(pt_original[1])),
+                                8,
+                                color,
+                                -1,
+                            )
+
+                        if len(center_line_x) >= 2:
+                            target_bev = np.array(
+                                [[[target_x, sample_y[-1]]]], dtype=np.float32
+                            )
+                            target_original = cv2.perspectiveTransform(
+                                target_bev, Minv
+                            )[0][0]
+                            cv2.circle(
+                                view_frame,
+                                (int(target_original[0]), int(target_original[1])),
+                                12,
+                                (0, 255, 255),
+                                3,
+                            )
 
                 except Exception as e:
-                    print(f"⚠️ Stanley Error: {e}")
-        # Hãm nhẹ tốc độ xử lý khi chạy Simulation để tránh ngốn 100% tài nguyên CPU không cần thiết
-        if state.mode == "simulation":
-            time.sleep(0.02)  # Khống chế ở mức ~40-50fps mượt mà
-        # 1. Vẽ tâm ảnh bằng màu xanh lá (Green)
+                    print(f"⚠️ Lane Control Error: {e}")
+
+        # Vẽ các đường tham chiếu hình thang ROI lên giao diện nhìn
+        cv2.polylines(view_frame, [src_pts.astype(np.int32)], True, (0, 255, 255), 2)
         cv2.line(view_frame, (w // 2, 0), (w // 2, h), (0, 255, 0), 1)
+        
+        # Đồng bộ đường line xanh dương chỉ thị mid_x
+        mid_x_original = (w // 2) + state.camera_offset
+        cv2.line(view_frame, (int(mid_x_original), 0), (int(mid_x_original), h), (255, 0, 0), 2)
 
-        # 2. Vẽ tâm thực tế của xe bằng màu xanh dương (Blue)
-        cv2.line(view_frame, (int(mid_x), 0), (int(mid_x), h), (255, 0, 0), 2)
-        # Gửi hình ảnh luồng video về giao diện Web HTML
-        _, buffer = cv2.imencode(".jpg", view_frame)
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-        )
+        state.latest_processed_frame = view_frame.copy()
+
+        if state.mode == "simulation":
+            time.sleep(0.02)
+
+
+ai_thread = threading.Thread(target=ai_processing_loop, daemon=True)
+ai_thread.start()
 
 
 # =========================================================
-# CONTROLLER ENDPOINTS
+# FASTAPI FRAME GENERATOR & ROUTER
 # =========================================================
+def frame_generator():
+    while True:
+        if state.latest_processed_frame is not None:
+            _, buffer = cv2.imencode(".jpg", state.latest_processed_frame)
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+            )
+        time.sleep(0.03)
+
+
+@app.get("/video_feed")
+def video_feed():
+    return StreamingResponse(
+        frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
 @app.post("/upload_video")
 async def upload_video(file: UploadFile = File(...)):
     file_path = os.path.join("uploads", file.filename)
@@ -437,13 +446,9 @@ async def upload_video(file: UploadFile = File(...)):
 @app.get("/set_mode")
 def set_mode(mode: str, file: str = ""):
     state.mode = mode
-    # state.video_source = (
-    #     "http://172.20.10.4:8080/video" if mode == "reality" else f"uploads/{file}"
-    # )
     state.video_source = (
         "http://192.168.100.166:8080/video" if mode == "reality" else f"uploads/{file}"
     )
-
     add_log(f"Chế độ -> {mode}")
     return {"status": "ok"}
 
@@ -457,40 +462,61 @@ def set_speed(val: int):
 
 
 @app.get("/control")
-def control(cmd: str):
+def control_car(cmd: str):
     if cmd == "START":
         state.is_running = True
         state.base_motion_state = "F"
-
+        send_mqtt(TOPIC_SPEED, f"s{state.current_limit_speed}")
         send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
-        add_log("▶️ KÍCH HOẠT HỆ THỐNG TỰ HÀNH AI")
+        state.last_speed_cmd = f"s{state.current_limit_speed}"
+        state.last_angle_sent = SERVO_CENTER
+        add_log("🚀 KÍCH HOẠT HỆ THỐNG AI AUTOMOTOR -> XE BẮT ĐẦU CHẠY")
+        return {"status": "success", "mode": "AI_STARTED"}
 
     elif cmd == "STOP_AI":
         state.is_running = False
         state.base_motion_state = "S"
         send_mqtt(TOPIC_SPEED, "S")
         send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
-        add_log("⏸ KHÓA AI -> CHUYỂN SANG ĐIỀU KHIỂN THỦ CÔNG")
+        state.last_speed_cmd = "S"
+        state.last_angle_sent = SERVO_CENTER
+        add_log("🛑 ĐÃ TẮT AI TIẾN TRÌNH -> CHUYỂN SANG ĐIỀU KHIỂN TAY")
+        return {"status": "success", "mode": "AI_STOPPED"}
 
-    else:
-        if not state.is_running:
-            if cmd in ["F", "B", "S"]:
-                state.base_motion_state = cmd
-                send_mqtt(TOPIC_DIRECTION, cmd)
-                add_log(f"Thủ công -> Di chuyển: {cmd}")
-            elif cmd == "L":
-                send_mqtt(TOPIC_DIRECTION, str(SERVO_LEFT))
-                add_log(f"Thủ công -> Bẻ lái Trái: {SERVO_LEFT}°")
-            elif cmd == "R":
-                send_mqtt(TOPIC_DIRECTION, str(SERVO_RIGHT))
-                add_log(f"Thủ công -> Bẻ lái Phải: {SERVO_RIGHT}°")
-            elif cmd == "G":
-                send_mqtt(TOPIC_DIRECTION, str(SERVO_CENTER))
-                add_log(f"Thủ công -> Thẳng lái: {SERVO_CENTER}°")
+    if state.is_running:
+        return {
+            "status": "ignored",
+            "reason": "AI mode is running. Please STOP AI first.",
+        }
+
+    max_speed = getattr(state, "current_limit_speed", 120)
+
+    if cmd in ["F", "B", "S"]:
+        state.base_motion_state = cmd
+        if cmd == "F":
+            cmd_speed = f"s{max_speed}"
+        elif cmd == "B":
+            cmd_speed = f"b{max_speed}"
         else:
-            add_log("⚠️ Vui lòng bấm 'STOP AI' trước khi muốn lái thủ công!")
+            cmd_speed = "S"
 
-    return {"status": "ok"}
+        if cmd_speed != str(state.last_speed_cmd):
+            send_mqtt(TOPIC_SPEED, cmd_speed)
+            state.last_speed_cmd = cmd_speed
+
+    elif cmd in ["L", "R", "G"]:
+        if cmd == "L":
+            servo_angle = SERVO_LEFT
+        elif cmd == "R":
+            servo_angle = SERVO_RIGHT
+        else:
+            servo_angle = SERVO_CENTER
+
+        if servo_angle != state.last_angle_sent:
+            send_mqtt(TOPIC_DIRECTION, str(servo_angle))
+            state.last_angle_sent = servo_angle
+
+    return {"status": "success"}
 
 
 @app.get("/get_status")
@@ -500,13 +526,6 @@ def get_status():
         "speed": state.current_limit_speed,
         "is_running": state.is_running,
     }
-
-
-@app.get("/video_feed")
-def video_feed():
-    return StreamingResponse(
-        frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame"
-    )
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

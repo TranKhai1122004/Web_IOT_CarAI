@@ -1,60 +1,78 @@
-import paho.mqtt.client as mqtt
-import time
+import cv2
+import numpy as np
 
-# ==========================================
-# CẤU HÌNH MQTT CỤC BỘ
-# ==========================================
-MQTT_SERVER = "127.0.0.1"
-MQTT_PORT = 1883
-TOPIC_DIRECTION = "remote_car/direction"
-TOPIC_SPEED = "remote_car/speed"
-
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.connect(MQTT_SERVER, MQTT_PORT)
-client.loop_start()
+# Tạo mảng lưu 4 tọa độ click chuột
+clicked_points = []
 
 
-def test_steering(direction_cmd, test_speed, duration_seconds):
-    print(
-        f"\n🚀 CHUẨN BỊ TEST: Rẽ {direction_cmd} | Tốc độ: {test_speed} | Thời gian: {duration_seconds} giây"
+def mouse_callback(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if len(clicked_points) < 4:
+            clicked_points.append([x, y])
+            print(f"📍 Đã chọn điểm {len(clicked_points)}: ({x}, {y})")
+            # Vẽ vòng tròn đánh dấu điểm vừa click
+            cv2.circle(img, (x, y), 5, (0, 0, 255), -1)
+            cv2.imshow(
+                "DONG DO TOA DO - CLICK THEO THU TU: TREN TRAI -> TREN PHAI -> DUOI TRAI -> DUOI PHAI",
+                img,
+            )
+
+
+# Địa chỉ camera stream thực tế từ iPhone của ông
+video_url = "http://192.168.100.166:8080/video"
+cap = cv2.VideoCapture(video_url)
+
+print("👉 Chờ 2 giây để bốc frame hình ảnh...")
+time_sleep = 2
+for _ in range(30):
+    cap.read()  # Đọc bỏ qua các frame nhiễu đầu tiên
+success, img = cap.read()
+
+if not success:
+    print("❌ Không thể bốc được ảnh từ iPhone! Check lại App trên điện thoại.")
+    exit()
+
+# Ép kích thước ảnh về chuẩn 640x480 đồng bộ với hệ thống AI
+img = cv2.resize(img, (640, 480))
+clone_img = img.copy()
+
+cv2.namedWindow(
+    "DONG DO TOA DO - CLICK THEO THU TU: TREN TRAI -> TREN PHAI -> DUOI TRAI -> DUOI PHAI"
+)
+cv2.setMouseCallback(
+    "DONG DO TOA DO - CLICK THEO THU TU: TREN TRAI -> TREN PHAI -> DUOI TRAI -> DUOI PHAI",
+    mouse_callback,
+)
+
+print("\n=== HƯỚNG DẪN ===")
+print(
+    "Dùng chuột click đúng 4 điểm tạo thành hình thang bao quanh LÀN ĐƯỜNG SA BÀN trước mũi xe:"
+)
+print("1. Click GÓC TRÊN BÊN TRÁI")
+print("2. Click GÓC TRÊN BÊN PHẢI")
+print("3. Click GÓC DƯỚI BÊN TRÁI")
+print("4. Click GÓC DƯỚI BÊN PHẢI")
+print("Ấn nút 'q' để Thoát, ấn 'r' để Reset làm lại từ đầu.\n")
+
+while True:
+    cv2.imshow(
+        "DONG DO TOA DO - CLICK THEO THU TU: TREN TRAI -> TREN PHAI -> DUOI TRAI -> DUOI PHAI",
+        img,
     )
-    print("Đặt xe xuống sàn phẳng, ngay hàng thẳng lối...")
+    key = cv2.waitKey(1) & 0xFF
 
-    # Đếm ngược 3 giây để chuẩn bị buông tay khỏi xe
-    for i in range(3, 0, -1):
-        print(f"{i}...")
-        time.sleep(1)
+    if key == ord("r"):
+        img = clone_img.copy()
+        clicked_points = []
+        print("🔄 Đã xóa làm lại!")
 
-    print("🔥 CHẠY!")
-    # 1. Bắn tốc độ test cố định (Trùng với tốc độ chạy AI, ví dụ s100)
-    client.publish(TOPIC_SPEED, f"s{test_speed}")
-    time.sleep(0.1)
+    if len(clicked_points) == 4 or key == ord("q"):
+        break
 
-    # 2. Bắn lệnh rẽ (L hoặc R)
-    client.publish(TOPIC_DIRECTION, direction_cmd)
+cv2.destroyAllWindows()
 
-    # 3. Giữ lệnh đúng số giây cần test
-    time.sleep(duration_seconds)
-
-    # 4. Phát lệnh DỪNG XE ngay lập tức (S)
-    client.publish(TOPIC_DIRECTION, "S")
-    print("🛑 DỪNG! Hãy đo góc lệch thực tế của xe.")
-
-
-if __name__ == "__main__":
-    try:
-        # ----- CẤU HÌNH THAM SỐ TEST TẠI ĐÂY -----
-        HUONG_RE = "L"  # L (Trái) hoặc R (Phải)
-        TOC_DO_TEST = 100  # Giữ cố định tốc độ nền (trong code chính của ông là 100)
-        THOI_GIAN_KICH_XUNG = (
-            0.20  # Thời gian cấp điện cho motor rẽ (Thử trước với 0.2 giây)
-        )
-
-        test_steering(HUONG_RE, TOC_DO_TEST, THOI_GIAN_KICH_XUNG)
-
-    except KeyboardInterrupt:
-        client.publish(TOPIC_DIRECTION, "S")
-        print("\nNgắt khẩn cấp!")
-    finally:
-        client.loop_stop()
-        client.disconnect()
+if len(clicked_points) == 4:
+    print(
+        "\n✅ THÀNH CÔNG! Copy 4 cặp tọa độ này ném vào code biến đổi Bird's Eye View:"
+    )
+    print(f"src = np.float32({clicked_points})")
