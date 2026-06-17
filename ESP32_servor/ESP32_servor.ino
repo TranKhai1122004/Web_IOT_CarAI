@@ -6,15 +6,15 @@
 // =====================================================
 // WIFI
 // =====================================================
-// const char* ssid = "Ipc";
-// const char* pass = "2212202444";
-const char* ssid = "Nha";
-const char* pass = "Tran1204@";
+const char* ssid = "Ipc";
+const char* pass = "2212202444";
+// const char* ssid = "Nha";
+// const char* pass = "Tran1204@";
 // =====================================================
 // MQTT
 // =====================================================
-// const char* mqtt_server = "172.20.10.2";
-const char* mqtt_server = "192.168.100.162";
+const char* mqtt_server = "172.20.10.4";
+// const char* mqtt_server = "192.168.100.162";
 const int mqtt_port = 1883;
 
 const char* TOPIC_DIRECTION = "remote_car/direction";
@@ -39,7 +39,7 @@ const char* TOPIC_STATUS    = "remote_car/status";
 // =====================================================
 #define SERVO_PIN 18
 
-#define SERVO_LEFT    102
+#define SERVO_LEFT    107
 #define SERVO_CENTER  87
 #define SERVO_RIGHT   67
 
